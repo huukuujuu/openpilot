@@ -263,7 +263,7 @@ def test_driver_monitoring_enabled_from_old_backup_is_not_restored(monkeypatch):
   assert restored == {"ok_cnt": 0, "fail_cnt": 0, "fails": []}
 
 
-def test_reset_defaults_restores_driver_monitoring_enabled_to_on(monkeypatch):
+def test_reset_defaults_restores_driver_monitoring_enabled_to_off(monkeypatch):
   class FakeParamKeyType:
     BOOL = "bool"
     INT = "int"
@@ -287,11 +287,11 @@ def test_reset_defaults_restores_driver_monitoring_enabled_to_on(monkeypatch):
   monkeypatch.setattr(params_service, "ParamKeyType", FakeParamKeyType)
   monkeypatch.setattr(params_service, "Params", RestoreParams)
   monkeypatch.setattr(params_service, "_catalog_definitions", dict)
-  monkeypatch.setattr(params_service, "get_param_values", lambda names, defaults: {"DriverMonitoringEnabled": False})
+  monkeypatch.setattr(params_service, "get_param_values", lambda names, defaults: {"DriverMonitoringEnabled": True})
   monkeypatch.setattr(params_service, "set_param_value", lambda key, value, definition=None: writes.append((key, value)))
 
   restored = params_service.restore_param_values_validated(
-    {"DriverMonitoringEnabled": "1"},
+    {"DriverMonitoringEnabled": "0"},
     source="reset_defaults",
   )
 
@@ -302,9 +302,9 @@ def test_reset_defaults_restores_driver_monitoring_enabled_to_on(monkeypatch):
     "invalid": 0,
     "selected": 1,
   }
-  assert restored["preview"]["entries"][0]["value"] is True
+  assert restored["preview"]["entries"][0]["value"] is False
   assert restored["result"] == {"ok_cnt": 1, "fail_cnt": 0, "fails": []}
-  assert writes == [("DriverMonitoringEnabled", True)]
+  assert writes == [("DriverMonitoringEnabled", False)]
 
 
 def test_old_params_backup_file_is_filtered_before_download(tmp_path):
