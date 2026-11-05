@@ -123,7 +123,10 @@ def ensure_pull(state: dict) -> dict:
     pr = matches[0]
     if pr.get("title") != TITLE:
       raise RuntimeError("An existing manually managed upstream PR exists; automatic takeover is disabled")
-    return api(f"repos/{REPOSITORY}/pulls/{pr['number']}", method="PATCH", data={"body": body})
+    # Explicitly reselect the same base: GitHub can retain the old PR base SHA
+    # and synthetic merge after the target branch advances. A body-only edit
+    # does not refresh it. This never switches to a different target branch.
+    return api(f"repos/{REPOSITORY}/pulls/{pr['number']}", method="PATCH", data={"body": body, "base": TARGET})
   return api(f"repos/{REPOSITORY}/pulls", method="POST", data={
     "title": TITLE, "head": f"ajouatom:{SOURCE_BRANCH}", "base": TARGET,
     "body": body, "maintainer_can_modify": False,
@@ -159,18 +162,20 @@ def prepare(dry_run: bool):
   # GitHub prepares a synthetic merge commit. Test its exact SHA, not moving
   # branch names, and verify both parents and tree against the local merge.
   merge_ref = f"refs/pull/{pr['number']}/merge"
-  for attempt in range(6):
+  for attempt in range(12):
+    current_pr = api(f"repos/{REPOSITORY}/pulls/{pr['number']}")
+    verify_pull(current_pr, state["base"], state["source"])
     fetched = git("fetch", "--no-tags", "origin", merge_ref, check=False)
     if fetched.returncode == 0:
       merge_sha = git("rev-parse", "FETCH_HEAD").stdout.strip()
       parents = git("show", "-s", "--format=%P", merge_sha).stdout.split()
       tree = git("show", "-s", "--format=%T", merge_sha).stdout.strip()
-      if parents == [state["base"], state["source"]] and tree == state["tree"]:
-        verify_pull(api(f"repos/{REPOSITORY}/pulls/{pr['number']}"), state["base"], state["source"])
+      if (parents == [state["base"], state["source"]] and tree == state["tree"] and
+          current_pr.get("mergeable") is True and current_pr.get("merge_commit_sha") == merge_sha):
         emit(ready=True, pr=pr["number"], merge_sha=merge_sha, base_sha=state["base"], source_sha=state["source"])
         return
-    if attempt < 5:
-      time.sleep(2)
+    if attempt < 11:
+      time.sleep(3)
   raise RuntimeError("GitHub merge ref is not ready or changed; no merge will be performed")
 
 

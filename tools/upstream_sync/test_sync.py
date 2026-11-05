@@ -93,6 +93,14 @@ def pull():
 
 
 class MergeGateTest(unittest.TestCase):
+  def test_existing_automatic_pr_explicitly_refreshes_the_same_base(self):
+    pr = pull()
+    pr.update(number=7, title=sync.TITLE)
+    with patch.object(sync, "api", side_effect=[[pr], pr]) as api:
+      sync.ensure_pull({"state": "ready", "source": "source", "base": "base"})
+      self.assertEqual(api.call_args.kwargs["method"], "PATCH")
+      self.assertEqual(api.call_args.kwargs["data"]["base"], sync.TARGET)
+
   def test_rejects_changed_head_base_draft_closed_or_wrong_repository(self):
     changes = [
       lambda p: p["head"].update(sha="new-source"),
