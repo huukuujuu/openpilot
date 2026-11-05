@@ -25,6 +25,7 @@ jobs:
       ready: ${{ steps.prepare.outputs.ready }}
       pr: ${{ steps.prepare.outputs.pr }}
       merge_sha: ${{ steps.prepare.outputs.merge_sha }}
+      merge_tree: ${{ steps.prepare.outputs.merge_tree }}
       base_sha: ${{ steps.prepare.outputs.base_sha }}
       source_sha: ${{ steps.prepare.outputs.source_sha }}
     steps:
@@ -57,7 +58,10 @@ jobs:
     uses: ./.github/workflows/tests.yaml
     with:
       run_number: upstream-sync
-      checkout_ref: ${{ needs.prepare.outputs.merge_sha }}
+      checkout_ref: ${{ needs.prepare.outputs.base_sha }}
+      merge_source: ${{ needs.prepare.outputs.source_sha }}
+      merge_tree: ${{ needs.prepare.outputs.merge_tree }}
+      merge_commit: ${{ needs.prepare.outputs.merge_sha }}
 
   automation_checks:
     needs: prepare
@@ -68,11 +72,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.merge_sha }}
+          ref: ${{ needs.prepare.outputs.base_sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Reconstruct exact integration commit
+        env:
+          MERGE_SOURCE: ${{ needs.prepare.outputs.source_sha }}
+          MERGE_TREE: ${{ needs.prepare.outputs.merge_tree }}
+          MERGE_COMMIT: ${{ needs.prepare.outputs.merge_sha }}
+        run: >-
+          python tools/upstream_sync/sync.py checkout
+          --source "$MERGE_SOURCE" --tree "$MERGE_TREE" --merge "$MERGE_COMMIT"
       - run: python -m unittest discover -s tools/upstream_sync -p 'test_*.py' -v
 
   merge:
@@ -89,6 +102,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:

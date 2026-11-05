@@ -12,12 +12,15 @@ three-way merge without altering a working checkout. Text conflicts, including
 modify/delete conflicts, block integration and are listed in the PR and run
 summary. The JSON merge report is saved as an Actions artifact.
 
-If conflict-free, the workflow fetches GitHub's synthetic PR merge commit,
-verifies both parents and its tree, and sends that exact SHA to all jobs in
-`tests.yaml`. The automation's own regression suite also runs. Validation jobs
+If conflict-free, the workflow creates a deterministic local merge commit.
+Every job in `tests.yaml` fetches the pinned source and base and reconstructs
+that commit, checking both its tree and SHA before testing. This avoids stale
+GitHub `refs/pull/N/merge` objects when the target advances. The temporary commit
+is never pushed. The automation's own regression suite also runs. Validation jobs
 receive read-only repository tokens and no inherited secrets. Only after every
 job succeeds does a separate write-capable controller recheck the PR, upstream
-head, target head and merge SHA, then merge the PR with the pinned upstream head.
+head, target head and reconstructed merge SHA, then merge the PR with the pinned
+upstream head and verify the resulting commit's tree and parents.
 If either branch advances during validation, the run stops and the next run must
 test the new candidate. Repository protection rules still apply.
 

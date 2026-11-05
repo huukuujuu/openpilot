@@ -63,6 +63,21 @@ class MergeAnalysisTest(unittest.TestCase):
     self.assertEqual(before, self.run_git("rev-parse", "HEAD", cwd=self.work))
     self.assertEqual(self.run_git("status", "--porcelain", cwd=self.work), "")
 
+  def test_candidate_is_reproducible_and_checked_out_only_after_hash_verification(self):
+    self.commit(self.origin, "custom.txt", "personal setting\n", "custom")
+    self.commit(self.source, "upstream.txt", "new feature\n", "upstream")
+    state = sync.analyse()
+    first = sync.candidate_commit(state["base"], state["source"], state["tree"])
+    self.assertEqual(first, sync.candidate_commit(state["base"], state["source"], state["tree"]))
+    self.assertEqual(self.run_git("show", "-s", "--format=%P", first, cwd=self.work).split(), [state["base"], state["source"]])
+    self.run_git("checkout", "--detach", state["base"], cwd=self.work)
+    with self.assertRaisesRegex(RuntimeError, "commit differs"):
+      sync.checkout_candidate(state["source"], state["tree"], "wrong-sha")
+    self.assertEqual(self.run_git("rev-parse", "HEAD", cwd=self.work), state["base"])
+    sync.checkout_candidate(state["source"], state["tree"], first)
+    self.assertEqual(self.run_git("rev-parse", "HEAD", cwd=self.work), first)
+    self.assertEqual(self.run_git("status", "--porcelain", cwd=self.work), "")
+
   def test_same_line_conflict_is_reported_without_modifying_checkout(self):
     self.commit(self.origin, "shared.txt", "custom value\n", "custom")
     self.commit(self.source, "shared.txt", "upstream value\n", "upstream")
@@ -119,9 +134,9 @@ class MergeGateTest(unittest.TestCase):
             sync.finish(1, "base", "source", "merge")
           self.assertEqual(api.call_count, 1)
 
-  def test_rejects_stale_merge_candidate(self):
+  def test_rejects_unmergeable_candidate(self):
     pr = pull()
-    pr["merge_commit_sha"] = "new-merge"
+    pr["mergeable"] = False
     with patch.object(sync, "api", return_value=pr) as api:
       with self.assertRaises(RuntimeError):
         sync.finish(1, "base", "source", "merge")
@@ -135,16 +150,27 @@ class MergeGateTest(unittest.TestCase):
         self.assertEqual(api.call_count, 3)
 
   def test_success_uses_normal_merge_with_pinned_head(self):
-    with patch.object(sync, "api", side_effect=[pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, {"merged": True, "sha": "final"}]) as api:
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    merged = {"tree": {"sha": "tree"}, "parents": [{"sha": "base"}, {"sha": "source"}]}
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=[pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, {"merged": True, "sha": "final"}, merged]) as api:
       sync.finish(7, "base", "source", "merge")
-      self.assertEqual(api.call_args.kwargs["method"], "PUT")
-      self.assertEqual(api.call_args.kwargs["data"]["sha"], "source")
-      self.assertEqual(api.call_args.kwargs["data"]["merge_method"], "merge")
+      merge_call = api.call_args_list[-2]
+      self.assertEqual(merge_call.kwargs["method"], "PUT")
+      self.assertEqual(merge_call.kwargs["data"]["sha"], "source")
+      self.assertEqual(merge_call.kwargs["data"]["merge_method"], "merge")
 
   def test_api_merge_rejection_is_a_failure(self):
-    with patch.object(sync, "api", side_effect=[pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, {"merged": False, "message": "branch protected"}]):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=[pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, {"merged": False, "message": "branch protected"}]):
       with self.assertRaisesRegex(RuntimeError, "branch protected"):
         sync.finish(1, "base", "source", "merge")
+
+  def test_recomputed_candidate_mismatch_prevents_merge(self):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="different"), patch.object(sync, "api", side_effect=[pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}]) as api:
+      with self.assertRaisesRegex(RuntimeError, "no longer matches"):
+        sync.finish(1, "base", "source", "merge")
+      self.assertEqual(api.call_count, 3)
 
 
 if __name__ == "__main__":

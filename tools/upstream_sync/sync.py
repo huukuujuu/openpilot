@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -143,6 +142,38 @@ def verify_pull(pr: dict, base: str, source: str):
     raise RuntimeError("PR source/base changed; wait for the next sync run")
 
 
+def candidate_commit(base: str, source: str, tree: str) -> str:
+  """Create the same local merge object on every runner; do not push it."""
+  timestamp = max(int(git("show", "-s", "--format=%ct", sha).stdout) for sha in (base, source)) + 1
+  env = {
+    **os.environ,
+    "GIT_AUTHOR_NAME": "EV6 Upstream Sync", "GIT_COMMITTER_NAME": "EV6 Upstream Sync",
+    "GIT_AUTHOR_EMAIL": "ev6-sync@users.noreply.github.com", "GIT_COMMITTER_EMAIL": "ev6-sync@users.noreply.github.com",
+    "GIT_AUTHOR_DATE": f"{timestamp} +0000", "GIT_COMMITTER_DATE": f"{timestamp} +0000",
+  }
+  result = subprocess.run(
+    ["git", "-c", "commit.gpgsign=false", "commit-tree", tree, "-p", base, "-p", source],
+    input=b"Validate pinned carrot-wip / carrot-ev6 integration\n",
+    capture_output=True, check=True, env=env,
+  )
+  return result.stdout.decode("ascii").strip()
+
+
+def checkout_candidate(source: str, tree: str, expected_commit: str):
+  """Reconstruct and check the candidate after checking out its pinned base."""
+  base = git("rev-parse", "HEAD").stdout.strip()
+  git("fetch", "--no-tags", f"https://github.com/{SOURCE}.git", source)
+  result = git("merge-tree", "--write-tree", base, source)
+  if result.stdout.splitlines()[0] != tree:
+    raise RuntimeError("Runner merge tree differs from the prepared candidate")
+  candidate = candidate_commit(base, source, tree)
+  if candidate != expected_commit:
+    raise RuntimeError("Runner merge commit differs from the prepared candidate")
+  git("checkout", "--detach", candidate)
+  git("submodule", "update", "--init", "--recursive")
+  print(f"Checked out exact integration commit {candidate} (tree {tree})")
+
+
 def prepare(dry_run: bool):
   state = analyse()
   Path("upstream-sync-report.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
@@ -159,24 +190,12 @@ def prepare(dry_run: bool):
     summary("Conflicting files:\n" + "\n".join(f"- `{p}`" for p in state["conflicts"]))
     emit(ready=False, pr=pr["number"], conflict=True)
     return
-  # GitHub prepares a synthetic merge commit. Test its exact SHA, not moving
-  # branch names, and verify both parents and tree against the local merge.
-  merge_ref = f"refs/pull/{pr['number']}/merge"
-  for attempt in range(12):
-    current_pr = api(f"repos/{REPOSITORY}/pulls/{pr['number']}")
-    verify_pull(current_pr, state["base"], state["source"])
-    fetched = git("fetch", "--no-tags", "origin", merge_ref, check=False)
-    if fetched.returncode == 0:
-      merge_sha = git("rev-parse", "FETCH_HEAD").stdout.strip()
-      parents = git("show", "-s", "--format=%P", merge_sha).stdout.split()
-      tree = git("show", "-s", "--format=%T", merge_sha).stdout.strip()
-      if (parents == [state["base"], state["source"]] and tree == state["tree"] and
-          current_pr.get("mergeable") is True and current_pr.get("merge_commit_sha") == merge_sha):
-        emit(ready=True, pr=pr["number"], merge_sha=merge_sha, base_sha=state["base"], source_sha=state["source"])
-        return
-    if attempt < 11:
-      time.sleep(3)
-  raise RuntimeError("GitHub merge ref is not ready or changed; no merge will be performed")
+  verify_pull(api(f"repos/{REPOSITORY}/pulls/{pr['number']}"), state["base"], state["source"])
+  # GitHub's refs/pull/N/merge can retain a previous base even after the API's
+  # base SHA has refreshed. Reconstruct one deterministic merge object instead
+  # and require every validation runner to reproduce its tree and commit SHA.
+  merge_sha = candidate_commit(state["base"], state["source"], state["tree"])
+  emit(ready=True, pr=pr["number"], merge_sha=merge_sha, merge_tree=state["tree"], base_sha=state["base"], source_sha=state["source"])
 
 
 def finish(number: int, base: str, source: str, merge_sha: str):
@@ -184,18 +203,25 @@ def finish(number: int, base: str, source: str, merge_sha: str):
   # to reject upstream/target movement while CI was running.
   pr = api(f"repos/{REPOSITORY}/pulls/{number}")
   verify_pull(pr, base, source)
-  if pr.get("mergeable") is not True or pr.get("merge_commit_sha") != merge_sha:
-    raise RuntimeError("Tested merge candidate is no longer current or mergeable")
+  if pr.get("mergeable") is not True:
+    raise RuntimeError("PR is not currently mergeable; wait for GitHub to refresh it")
   current_base = api(f"repos/{REPOSITORY}/git/ref/heads/{TARGET}")["object"]["sha"]
   current_source = api(f"repos/{SOURCE}/git/ref/heads/{SOURCE_BRANCH}")["object"]["sha"]
   if current_base != base or current_source != source:
     raise RuntimeError("A branch advanced during CI; the next run must test it again")
+  state = analyse()
+  if (state["state"] != "ready" or state["base"] != base or state["source"] != source or
+      candidate_commit(base, source, state["tree"]) != merge_sha):
+    raise RuntimeError("Final merge no longer matches the validated candidate")
   result = api(f"repos/{REPOSITORY}/pulls/{number}/merge", method="PUT", data={
     "sha": source, "merge_method": "merge",
     "commit_title": f"Merge {SOURCE_BRANCH} into {TARGET} (#{number})",
   })
   if result.get("merged") is not True:
     raise RuntimeError(result.get("message", "GitHub refused the merge"))
+  merged = api(f"repos/{REPOSITORY}/git/commits/{result['sha']}")
+  if merged["tree"]["sha"] != state["tree"] or [p["sha"] for p in merged["parents"]] != [base, source]:
+    raise RuntimeError("GitHub merged a different base/tree; inspect the PR before further updates")
   summary(f"Merged PR #{number}: `{result['sha']}`. No device installation or reboot was requested.")
 
 
@@ -204,6 +230,9 @@ def main():
   sub = parser.add_subparsers(dest="command", required=True)
   prepare_args = sub.add_parser("prepare")
   prepare_args.add_argument("--dry-run", action="store_true")
+  checkout_args = sub.add_parser("checkout")
+  for arg in ("source", "tree", "merge"):
+    checkout_args.add_argument(f"--{arg}", required=True)
   finish_args = sub.add_parser("finish")
   finish_args.add_argument("--pr", type=int, required=True)
   for arg in ("base", "source", "merge"):
@@ -211,6 +240,8 @@ def main():
   args = parser.parse_args()
   if args.command == "prepare":
     prepare(args.dry_run)
+  elif args.command == "checkout":
+    checkout_candidate(args.source, args.tree, args.merge)
   else:
     finish(args.pr, args.base, args.source, args.merge)
 
