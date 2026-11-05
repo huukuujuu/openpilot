@@ -1,0 +1,106 @@
+name: EV6 upstream sync
+
+on:
+  schedule:
+    # Offset from the hour to reduce peak-time scheduling delays (UTC).
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ev6-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'huukuujuu/openpilot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      ready: ${{ steps.prepare.outputs.ready }}
+      pr: ${{ steps.prepare.outputs.pr }}
+      merge_sha: ${{ steps.prepare.outputs.merge_sha }}
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      source_sha: ${{ steps.prepare.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: carrot-ev6
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check upstream and prepare integration PR
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/upstream_sync/sync.py prepare
+      - name: Preserve merge/conflict report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-report
+          path: upstream-sync-report.json
+          if-no-files-found: ignore
+
+  validate:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yaml
+    with:
+      run_number: upstream-sync
+      checkout_ref: ${{ needs.prepare.outputs.merge_sha }}
+
+  automation_checks:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.merge_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tools/upstream_sync -p 'test_*.py' -v
+
+  merge:
+    needs: [prepare, validate, automation_checks]
+    if: needs.prepare.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # The merge controller comes from the workflow revision, not the proposed
+      # upstream merge. Candidate code never receives this job's write token.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Merge only the tested, still-current PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr }}
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          MERGE_SHA: ${{ needs.prepare.outputs.merge_sha }}
+        run: >-
+          python tools/upstream_sync/sync.py finish
+          --pr "$PR_NUMBER" --base "$BASE_SHA"
+          --source "$SOURCE_SHA" --merge "$MERGE_SHA"
