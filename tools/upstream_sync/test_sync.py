@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("ev6_sync", Path(__file__).with_name("sync.py"))
@@ -51,6 +53,45 @@ class MergeAnalysisTest(unittest.TestCase):
 
   def test_already_included_is_noop(self):
     self.assertEqual(sync.analyse()["state"], "current")
+
+  def publish_merge(self, state, *, tree=None, parents=None):
+    args = ["-c", "user.name=Sync Test", "-c", "user.email=sync-test@example.invalid", "commit-tree", tree or state["tree"]]
+    for parent in parents or [state["base"], state["source"]]:
+      args += ["-p", parent]
+    commit = self.run_git(*args, "-m", "Simulated server merge", cwd=self.work)
+    self.run_git("push", "origin", f"{commit}:refs/heads/simulated-server-objects", cwd=self.work)
+    self.run_git("update-ref", "refs/heads/carrot-ev6", commit, cwd=self.origin)
+    return commit
+
+  def divergent_state(self):
+    self.commit(self.origin, "custom.txt", "personal setting\n", "custom")
+    self.commit(self.source, "upstream.txt", "new feature\n", "upstream")
+    return sync.analyse()
+
+  def test_recovers_exact_server_merge_including_when_later_commits_exist(self):
+    state = self.divergent_state()
+    expected = sync.candidate_commit(state["base"], state["source"], state["tree"])
+    applied = self.publish_merge(state)
+    self.assertEqual(sync.find_applied_merge(state["base"], state["source"], expected), applied)
+    self.publish_merge(state, parents=[applied])
+    self.assertEqual(sync.find_applied_merge(state["base"], state["source"], expected), applied)
+
+  def test_recovery_rejects_wrong_tree_or_wrong_validated_candidate(self):
+    state = self.divergent_state()
+    applied = self.publish_merge(state)
+    with self.assertRaisesRegex(RuntimeError, "validated candidate"):
+      sync.find_applied_merge(state["base"], state["source"], "wrong-candidate")
+    wrong_tree = self.run_git("show", "-s", "--format=%T", state["base"], cwd=self.work)
+    # Use a separate transfer ref for a deliberately non-fast-forward fixture.
+    self.run_git("update-ref", "-d", "refs/heads/simulated-server-objects", cwd=self.origin)
+    self.publish_merge(state, tree=wrong_tree)
+    with self.assertRaisesRegex(RuntimeError, "unexpected contents"):
+      sync.find_applied_merge(state["base"], state["source"])
+
+  def test_recovery_does_not_accept_a_different_parent_pair(self):
+    state = self.divergent_state()
+    self.publish_merge(state, parents=[state["source"], state["base"]])
+    self.assertIsNone(sync.find_applied_merge(state["base"], state["source"]))
 
   def test_independent_customization_survives_real_three_way_merge(self):
     self.commit(self.origin, "custom.txt", "personal setting\n", "custom")
@@ -101,6 +142,7 @@ class MergeAnalysisTest(unittest.TestCase):
 
 def pull():
   return {
+    "title": sync.TITLE,
     "state": "open", "draft": False, "mergeable": True, "merge_commit_sha": "merge",
     "base": {"repo": {"full_name": sync.REPOSITORY}, "ref": sync.TARGET, "sha": "base"},
     "head": {"repo": {"full_name": sync.SOURCE}, "ref": sync.SOURCE_BRANCH, "sha": "source"},
@@ -108,6 +150,15 @@ def pull():
 
 
 class MergeGateTest(unittest.TestCase):
+  def setUp(self):
+    for name in ("find_applied_merge", "reconcile_pull"):
+      patcher = patch.object(sync, name, return_value=None)
+      patcher.start()
+      self.addCleanup(patcher.stop)
+    patcher = patch.object(sync.time, "sleep")
+    patcher.start()
+    self.addCleanup(patcher.stop)
+
   def test_existing_automatic_pr_explicitly_refreshes_the_same_base(self):
     pr = pull()
     pr.update(number=7, title=sync.TITLE)
@@ -171,6 +222,105 @@ class MergeGateTest(unittest.TestCase):
       with self.assertRaisesRegex(RuntimeError, "no longer matches"):
         sync.finish(1, "base", "source", "merge")
       self.assertEqual(api.call_count, 3)
+
+  def test_rerun_recovers_applied_merge_before_rejecting_changed_heads(self):
+    pr = pull()
+    pr["state"] = "closed"
+    with patch.object(sync, "api", return_value=pr) as api, patch.object(sync, "find_applied_merge", return_value="already-applied"):
+      sync.finish(1, "base", "source", "merge")
+      self.assertEqual(api.call_count, 1)
+      sync.reconcile_pull.assert_called_once_with(1, "source", "already-applied")
+
+  def test_502_after_success_is_recovered_without_second_merge_request(self):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    responses = [pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, sync.GitHubAPIError(502, "server error")]
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=responses) as api, patch.object(sync, "find_applied_merge", side_effect=[None, "applied"]):
+      sync.finish(1, "base", "source", "merge")
+      self.assertEqual(sum(c.kwargs.get("method") == "PUT" for c in api.call_args_list), 1)
+      sync.reconcile_pull.assert_called_once_with(1, "source", "applied")
+
+  def test_503_without_application_retries_only_after_rechecking_both_heads(self):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    heads = [{"object": {"sha": "base"}}, {"object": {"sha": "source"}}]
+    merged = {"tree": {"sha": "tree"}, "parents": [{"sha": "base"}, {"sha": "source"}]}
+    responses = [pull(), *heads, sync.GitHubAPIError(503, "unavailable"), pull(), *heads, {"merged": True, "sha": "final"}, merged]
+    with patch.object(sync, "analyse", return_value=state) as analyse, patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=responses) as api:
+      sync.finish(1, "base", "source", "merge")
+      self.assertEqual(analyse.call_count, 2)
+      self.assertEqual(sum(c.kwargs.get("method") == "PUT" for c in api.call_args_list), 2)
+
+  def test_ambiguous_failure_then_branch_change_never_retries_a_write(self):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    responses = [pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, sync.GitHubAPIError(0, "timeout"), pull(), {"object": {"sha": "changed"}}, {"object": {"sha": "source"}}]
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=responses) as api:
+      with self.assertRaisesRegex(RuntimeError, "branch advanced"):
+        sync.finish(1, "base", "source", "merge")
+      self.assertEqual(sum(c.kwargs.get("method") == "PUT" for c in api.call_args_list), 1)
+
+  def test_permission_denial_is_not_retried(self):
+    state = {"state": "ready", "base": "base", "source": "source", "tree": "tree"}
+    responses = [pull(), {"object": {"sha": "base"}}, {"object": {"sha": "source"}}, sync.GitHubAPIError(403, "denied")]
+    with patch.object(sync, "analyse", return_value=state), patch.object(sync, "candidate_commit", return_value="merge"), patch.object(sync, "api", side_effect=responses) as api:
+      with self.assertRaises(sync.GitHubAPIError):
+        sync.finish(1, "base", "source", "merge")
+      self.assertEqual(sum(c.kwargs.get("method") == "PUT" for c in api.call_args_list), 1)
+
+
+class ReconcileTest(unittest.TestCase):
+  def test_closes_stale_pr_with_a_receipt_and_is_idempotent(self):
+    pr = pull()
+    closed = {**pr, "state": "closed"}
+    with patch.object(sync, "api", side_effect=[pr, closed, closed]) as api:
+      sync.reconcile_pull(2, "source", "applied")
+      data = api.call_args_list[1].kwargs["data"]
+      self.assertEqual(data["state"], "closed")
+      self.assertIn("EV6-SYNC-APPLIED:source", data["body"])
+    with patch.object(sync, "api", return_value=closed) as api:
+      sync.reconcile_pull(2, "source", "applied")
+      self.assertEqual(api.call_count, 1)
+
+  def test_new_source_or_unmanaged_pr_is_never_closed(self):
+    for key, value in [("head", {**pull()["head"], "sha": "new-source"}), ("title", "manual PR")]:
+      pr = {**pull(), key: value}
+      with self.subTest(key=key), patch.object(sync, "api", return_value=pr) as api:
+        sync.reconcile_pull(2, "source", "applied")
+        self.assertEqual(api.call_count, 1)
+
+  def test_source_advance_racing_cleanup_reopens_pr(self):
+    pr = pull()
+    changed = {**pr, "state": "closed", "head": {**pr["head"], "sha": "new-source"}}
+    with patch.object(sync, "api", side_effect=[pr, changed, changed, {}]) as api:
+      sync.reconcile_pull(2, "source", "applied")
+      self.assertEqual(api.call_args.kwargs["data"], {"state": "open"})
+
+  def test_cleanup_outage_does_not_erase_verified_merge_success(self):
+    with patch.object(sync, "api", side_effect=sync.GitHubAPIError(502, "unavailable")), patch.object(sync, "summary") as summary:
+      sync.reconcile_pull(2, "source", "applied")
+      self.assertIn("cleanup is pending", summary.call_args.args[0])
+
+  def test_noop_check_repairs_only_proven_managed_prs(self):
+    pr = {**pull(), "number": 2}
+    with patch.object(sync, "api", return_value=[pr, {**pr, "title": "manual"}]), patch.object(sync, "find_applied_merge", return_value="applied") as find, patch.object(sync, "reconcile_pull") as reconcile:
+      sync.reconcile_current_pulls()
+      find.assert_called_once_with("base", "source")
+      reconcile.assert_called_once_with(2, "source", "applied")
+
+
+class APITransportTest(unittest.TestCase):
+  def test_non_json_502_write_is_typed_and_never_replayed(self):
+    error = urllib.error.HTTPError("https://api.github.com/test", 502, "bad gateway", {}, io.BytesIO(b"<html>bad gateway</html>"))
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "test-only-token"}), patch.object(sync.urllib.request, "urlopen", side_effect=error) as request:
+      with self.assertRaises(sync.GitHubAPIError) as raised:
+        sync.api("test", method="PUT", data={})
+      self.assertEqual(raised.exception.status, 502)
+      self.assertNotIn("test-only-token", str(raised.exception))
+      self.assertEqual(request.call_count, 1)
+
+  def test_transient_read_is_retried(self):
+    error = urllib.error.HTTPError("https://api.github.com/test", 503, "unavailable", {}, io.BytesIO(b'{}'))
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "test-only-token"}), patch.object(sync.time, "sleep"), patch.object(sync.urllib.request, "urlopen", side_effect=[error, io.BytesIO(b'{"ok":true}')]) as request:
+      self.assertEqual(sync.api("test"), {"ok": True})
+      self.assertEqual(request.call_count, 2)
 
 
 if __name__ == "__main__":

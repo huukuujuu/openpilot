@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +22,13 @@ TARGET = "carrot-ev6"
 UPSTREAM_REF = "refs/upstream-sync/source"
 TARGET_REF = "refs/upstream-sync/target"
 TITLE = "chore: merge upstream carrot-wip into carrot-ev6"
+TRANSIENT_ERRORS = {0, 408, 500, 502, 503, 504}
+
+
+class GitHubAPIError(RuntimeError):
+  def __init__(self, status: int, message: str):
+    self.status = status
+    super().__init__(message)
 
 
 def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -38,16 +46,28 @@ def api(path: str, *, method: str = "GET", data=None):
       "Content-Type": "application/json",
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "carrot-ev6-upstream-sync",
+      "Cache-Control": "no-cache",
     },
   )
-  try:
-    with urllib.request.urlopen(request, timeout=45) as response:
-      return json.load(response)
-  except urllib.error.HTTPError as exc:
-    # GitHub errors contain useful permission/branch-protection diagnostics,
-    # but must never include request headers or the token.
-    detail = json.loads(exc.read()).get("message", str(exc))
-    raise RuntimeError(f"GitHub {method} {path}: {exc.code} {detail}") from None
+  # Reads may be retried. Writes, especially merges, must be reconciled against
+  # actual Git history before another write is attempted.
+  for attempt in range(3 if method == "GET" else 1):
+    try:
+      with urllib.request.urlopen(request, timeout=45) as response:
+        body = response.read()
+        return json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+      body = exc.read()
+      try:
+        detail = json.loads(body).get("message", f"HTTP {exc.code}")
+      except (ValueError, AttributeError):
+        detail = f"HTTP {exc.code} (non-JSON response)"
+      error = GitHubAPIError(exc.code, f"GitHub {method} {path}: {exc.code} {detail}")
+    except (urllib.error.URLError, TimeoutError) as exc:
+      error = GitHubAPIError(0, f"GitHub {method} {path}: network/timeout failure ({type(exc).__name__})")
+    if method != "GET" or error.status not in TRANSIENT_ERRORS or attempt == 2:
+      raise error from None
+    time.sleep(2 ** attempt)
 
 
 def emit(**values):
@@ -142,6 +162,86 @@ def verify_pull(pr: dict, base: str, source: str):
     raise RuntimeError("PR source/base changed; wait for the next sync run")
 
 
+def managed_pull(pr: dict) -> bool:
+  return (
+    pr.get("title") == TITLE and
+    (pr.get("base", {}).get("repo") or {}).get("full_name") == REPOSITORY and
+    (pr.get("head", {}).get("repo") or {}).get("full_name") == SOURCE and
+    pr.get("base", {}).get("ref") == TARGET and
+    pr.get("head", {}).get("ref") == SOURCE_BRANCH
+  )
+
+
+def find_applied_merge(base: str, source: str, merge_sha: str | None = None) -> str | None:
+  """Prove that the exact validated merge is in the target's first-parent history.
+
+  An ancestor check alone is insufficient: it could accept a different merge,
+  a changed tree, or discard EV6 work. Fetch public Git objects independently
+  of the possibly stale PR/REST merge response.
+  """
+  git("fetch", "--no-tags", "origin", f"+refs/heads/{TARGET}:{TARGET_REF}")
+  head = git("rev-parse", TARGET_REF).stdout.strip()
+  if head == base:
+    return None
+  ancestor = git("merge-base", "--is-ancestor", base, head, check=False)
+  if ancestor.returncode == 1:
+    return None
+  if ancestor.returncode:
+    raise RuntimeError("Unable to verify target history after merge request")
+  history = git("rev-list", "--first-parent", "--parents", "--max-count=200", f"{base}..{head}").stdout.splitlines()
+  for line in history:
+    commit, *parents = line.split()
+    if parents != [base, source]:
+      continue
+    result = git("merge-tree", "--write-tree", base, source)
+    expected_tree = result.stdout.splitlines()[0]
+    if merge_sha is not None and candidate_commit(base, source, expected_tree) != merge_sha:
+      raise RuntimeError("Applied merge does not match the validated candidate")
+    if git("show", "-s", "--format=%T", commit).stdout.strip() != expected_tree:
+      raise RuntimeError("Applied merge has unexpected contents; manual inspection required")
+    return commit
+  return None
+
+
+def reconcile_pull(number: int, source: str, applied: str) -> None:
+  """Close only our stale, already-applied PR and retain a verifiable receipt."""
+  try:
+    path = f"repos/{REPOSITORY}/pulls/{number}"
+    pr = api(path)
+    if not managed_pull(pr) or pr.get("state") != "open" or pr["head"]["sha"] != source:
+      return
+    marker = f"<!-- EV6-SYNC-APPLIED:{source} -->"
+    body = pr.get("body") or ""
+    if marker not in body:
+      body += (
+        f"\n\n{marker}\nApplied upstream `{source}` was verified in target history as "
+        f"[{applied[:8]}](https://github.com/{REPOSITORY}/commit/{applied}). "
+        "The merge parents and file tree match the proposed integration. "
+        "Closing this already-applied PR even if GitHub did not update its merged flag."
+      )
+    api(path, method="PATCH", data={"state": "closed", "body": body})
+    # Do not leave a newly advanced upstream head closed if it raced the PATCH.
+    updated = api(path)
+    if managed_pull(updated) and updated["head"]["sha"] != source and updated.get("state") == "closed":
+      api(path, method="PATCH", data={"state": "open"})
+      summary(f"PR #{number} advanced during cleanup and was reopened for fresh validation.")
+    else:
+      summary(f"Reconciled already-applied PR #{number}: `{applied}`.")
+  except GitHubAPIError as exc:
+    # A metadata outage must not turn a proven applied merge into a failed code
+    # update. The next scheduled no-op check retries stale-PR cleanup.
+    summary(f"::warning::Merge is verified; PR #{number} metadata cleanup is pending: {exc}")
+
+
+def reconcile_current_pulls() -> None:
+  query = urllib.parse.urlencode({"state": "open", "base": TARGET, "head": f"ajouatom:{SOURCE_BRANCH}", "per_page": 100})
+  for pr in api(f"repos/{REPOSITORY}/pulls?{query}"):
+    if managed_pull(pr):
+      applied = find_applied_merge(pr["base"]["sha"], pr["head"]["sha"])
+      if applied:
+        reconcile_pull(pr["number"], pr["head"]["sha"], applied)
+
+
 def candidate_commit(base: str, source: str, tree: str) -> str:
   """Create the same local merge object on every runner; do not push it."""
   timestamp = max(int(git("show", "-s", "--format=%ct", sha).stdout) for sha in (base, source)) + 1
@@ -181,6 +281,7 @@ def prepare(dry_run: bool):
     emit(**state)
     return
   if state["state"] == "current":
+    reconcile_current_pulls()
     summary("carrot-ev6 already contains the current upstream commit.")
     emit(ready=False)
     return
@@ -202,26 +303,56 @@ def finish(number: int, base: str, source: str, merge_sha: str):
   # This phase runs only after all validation jobs succeeded. Fetch the PR again
   # to reject upstream/target movement while CI was running.
   pr = api(f"repos/{REPOSITORY}/pulls/{number}")
+  if not managed_pull(pr):
+    raise RuntimeError("PR source/base identity is not the managed upstream integration")
+  applied = find_applied_merge(base, source, merge_sha)
+  if applied:
+    reconcile_pull(number, source, applied)
+    summary(f"Verified previously applied PR #{number}: `{applied}`. No second merge was requested.")
+    return
   verify_pull(pr, base, source)
   if pr.get("mergeable") is not True:
     raise RuntimeError("PR is not currently mergeable; wait for GitHub to refresh it")
-  current_base = api(f"repos/{REPOSITORY}/git/ref/heads/{TARGET}")["object"]["sha"]
-  current_source = api(f"repos/{SOURCE}/git/ref/heads/{SOURCE_BRANCH}")["object"]["sha"]
-  if current_base != base or current_source != source:
-    raise RuntimeError("A branch advanced during CI; the next run must test it again")
-  state = analyse()
-  if (state["state"] != "ready" or state["base"] != base or state["source"] != source or
-      candidate_commit(base, source, state["tree"]) != merge_sha):
-    raise RuntimeError("Final merge no longer matches the validated candidate")
-  result = api(f"repos/{REPOSITORY}/pulls/{number}/merge", method="PUT", data={
-    "sha": source, "merge_method": "merge",
-    "commit_title": f"Merge {SOURCE_BRANCH} into {TARGET} (#{number})",
-  })
+  for attempt in range(3):
+    # Repeat all head/tree gates before retrying a write. Never replay a merge
+    # merely because the previous HTTP response was 502 or timed out.
+    current_base = api(f"repos/{REPOSITORY}/git/ref/heads/{TARGET}")["object"]["sha"]
+    current_source = api(f"repos/{SOURCE}/git/ref/heads/{SOURCE_BRANCH}")["object"]["sha"]
+    if current_base != base or current_source != source:
+      raise RuntimeError("A branch advanced during CI; the next run must test it again")
+    state = analyse()
+    if (state["state"] != "ready" or state["base"] != base or state["source"] != source or
+        candidate_commit(base, source, state["tree"]) != merge_sha):
+      raise RuntimeError("Final merge no longer matches the validated candidate")
+    try:
+      result = api(f"repos/{REPOSITORY}/pulls/{number}/merge", method="PUT", data={
+        "sha": source, "merge_method": "merge",
+        "commit_title": f"Merge {SOURCE_BRANCH} into {TARGET} (#{number})",
+      })
+      break
+    except GitHubAPIError as exc:
+      if exc.status not in TRANSIENT_ERRORS:
+        raise
+      summary(f"Merge response uncertain ({exc}); verifying Git history before any retry.")
+      for observation in range(3):
+        applied = find_applied_merge(base, source, merge_sha)
+        if applied:
+          reconcile_pull(number, source, applied)
+          summary(f"Recovered successful PR #{number} after API error: `{applied}`.")
+          return
+        if observation < 2:
+          time.sleep(2)
+      if attempt == 2:
+        raise
+      time.sleep(2 ** attempt)
+      pr = api(f"repos/{REPOSITORY}/pulls/{number}")
+      verify_pull(pr, base, source)
   if result.get("merged") is not True:
     raise RuntimeError(result.get("message", "GitHub refused the merge"))
   merged = api(f"repos/{REPOSITORY}/git/commits/{result['sha']}")
   if merged["tree"]["sha"] != state["tree"] or [p["sha"] for p in merged["parents"]] != [base, source]:
     raise RuntimeError("GitHub merged a different base/tree; inspect the PR before further updates")
+  reconcile_pull(number, source, result["sha"])
   summary(f"Merged PR #{number}: `{result['sha']}`. No device installation or reboot was requested.")
 
 

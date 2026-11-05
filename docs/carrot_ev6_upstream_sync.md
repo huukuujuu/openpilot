@@ -24,6 +24,38 @@ upstream head and verify the resulting commit's tree and parents.
 If either branch advances during validation, the run stops and the next run must
 test the new candidate. Repository protection rules still apply.
 
+## Uncertain merge responses and stale PRs
+
+A 502/503/504, timeout, or connection failure can arrive after GitHub has already
+updated the branch. The merge controller therefore checks fetched Git history
+before retrying a write. It requires a reachable first-parent merge with exactly
+the validated base and source parents and the validated three-way merge tree.
+Mere upstream ancestry does not count as successful validation. An exact applied
+merge is successful even if the HTTP response failed or a later rerun sees that
+the target has advanced. It never requests a second merge of that candidate.
+
+If no applied merge can be proved, a transient error permits at most three merge
+requests, with bounded observations between them. Each new request repeats the
+branch-head and candidate-tree gates. Permission and other permanent failures
+are not retried. Safe API reads have bounded transient retries; other writes are
+not blindly replayed.
+
+An already-applied automatic PR can remain open when GitHub fails to update its
+PR metadata. The controller closes that PR with a commit receipt only if its
+current head still matches the applied source and its repository/branch identity
+matches this automation. A newer upstream head is kept open for fresh validation;
+if it races cleanup, the PR is reopened. An unrelated manually managed PR is not
+touched. A cleanup API outage produces a warning rather than erasing a verified
+merge success; subsequent scheduled no-op checks retry cleanup. Dry runs never
+change PR metadata. GitHub's historical failed runs are retained; a later success
+and the receipt explain the recovered state. Closing a stale PR does not rewrite
+GitHub's separate `merged` flag.
+
+This handles the 2026-11-06 incident: run `42058935604` reported a merge HTTP 502,
+but `0ce0fb27d288f6044260947de1d16152de868cc0` was already in `carrot-ev6`, with
+parents `ad888df1` and `612881c4`. A rerun had then rejected the advanced target
+instead of recognizing the completed merge.
+
 No force push, rebase, file-wide ours/theirs resolution, source overwrite,
 device write or device reboot is used. Git can merge independent changes;
 passing CI is not proof that all behavioral interactions are correct or that
