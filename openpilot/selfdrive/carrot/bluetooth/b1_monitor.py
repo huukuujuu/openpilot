@@ -101,6 +101,8 @@ class Intent:
 class Monitor:
   def __init__(self):
     self.client = Bluez()
+    self.exchange_lock = asyncio.Lock()
+    self.last_signal_at = time.monotonic()
     self.state = 'idle'
     self.firmware_state = 'waiting'
     self.owned = None
@@ -113,14 +115,22 @@ class Monitor:
     self.params = None
     self.sent_sequences = deque(maxlen=6)
     self.next_badge = 0.
-    self.last_lamps = None
+    self.last_display = None
+    self.report = None
+    if Path('/TICI').is_file():
+      from openpilot.common.swaglog import cloudlog
+      self.report = cloudlog.event
     self.proven_at = -10.
     self.last_command = None
     self.next_discovery = 0.
 
   def publish_badge(self, state, now, lamps, accepted_id):
-    if lamps != self.last_lamps or now >= self.next_badge:
-      self.last_lamps = lamps
+    display = (state, lamps, accepted_id)
+    if display != self.last_display and self.report and self.last_command and 0 <= now-self.last_command['time'] < 5:
+      self.report('b1TapFeedback', request_id=self.last_command['id'], seq=self.last_command['seq'],
+                  receiver_state=state, lamps=lamps, accepted_id=accepted_id)
+    if display != self.last_display or now >= self.next_badge:
+      self.last_display = display
       self.next_badge = now + .35
       with suppress(OSError):
         atomic_json(BADGE, {'state':state, 'time':now, 'lamps':lamps, 'accepted_id':accepted_id,
@@ -186,6 +196,7 @@ class Monitor:
       self.session, self.intent = nonce, Intent()
       self.intent.seq = last_seq
       self.sent_sequences.clear()
+      self.last_signal_at = now
       self.proven_at = -10.
       self.last_command = None
       self.next_start = now + .65
@@ -212,12 +223,17 @@ class Monitor:
     # The worker can publish a newer timestamp while latest() drains its socket.
     now = time.monotonic()
     op, ident, ttl = self.intent.choose(self.source, state, ack, now)
+    if (lamps or state not in ('ready', 'missing') or ident or self.intent.queued or
+        (self.source and (self.source.get('hold') or self.source.get('events')))):
+      self.last_signal_at = now
     self.intent.seq = (self.intent.seq + 1) % 65536 or 1
     packet = command(key, nonce, stamp, self.intent.seq, op, ttl)
     await self.client.call(self.attrs[CONTROL], GATT, 'WriteValue', 'aya{sv}', (packet, {'type':('s','request')}), reply_timeout=.35)
     self.sent_sequences.append(self.intent.seq)
     if ident:
       self.last_command = {'id':ident, 'seq':self.intent.seq, 'time':now}
+      if self.report:
+        self.report('b1TapRequest', request_id=ident, seq=self.intent.seq, direction='left' if op==1 else 'right')
       self.intent.inflight = self.intent.seq, ident, now
     self.state = f'{state} · L={lamps & 1} R={(lamps >> 1) & 1}' if authenticated else 'verifying board key'
     self.publish_badge(state if authenticated else 'auth', now, lamps, pending[1] if pending and pending[0]==ack else None)
@@ -321,14 +337,16 @@ class Monitor:
           await asyncio.sleep(.5)
           continue
         try:
-          if self.attrs and maintenance_active():
-            self.stop_source()
-            self.intent.inflight = self.intent.queued = None
-            self.state = 'firmware update'
-            await asyncio.sleep(.15)
-          elif self.attrs:
-            await self.exchange(registration[1])
-            await asyncio.sleep(.035)
+          if self.attrs:
+            async with self.exchange_lock:
+              if maintenance_active():
+                self.stop_source()
+                self.intent.inflight = self.intent.queued = None
+                self.state = 'firmware update'
+                self.publish_badge('updating', time.monotonic(), 0, None)
+              else:
+                await self.exchange(registration[1])
+            await asyncio.sleep(.035 if self.state != 'firmware update' else .15)
           else:
             self.state = await self.discover(registration[0])
             await asyncio.sleep(.5 if self.owned else 3)
