@@ -239,7 +239,7 @@ jobs:
         run: >-
           python -m pytest -o addopts='' -o faulthandler_timeout=60 -vv -s
           openpilot/selfdrive/controls/tests/test_leads.py
-      - name: Check model, monitoring and Bluetooth integration
+      - name: Check model and monitoring integration
         timeout-minutes: 4
         run: |
           python -m pytest -o addopts='' -o faulthandler_timeout=60 -vv \
@@ -270,13 +270,21 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_radar_cutout_fast_path.py \
             openpilot/selfdrive/carrot/tests/test_cluster_performance_safeguards.py \
             openpilot/selfdrive/carrot/tests/test_cluster_autorun.py \
-            openpilot/selfdrive/carrot/bluetooth/tests \
             openpilot/selfdrive/car/tests/test_carrot_cruise_buttons.py \
             opendbc_repo/opendbc/car/volkswagen/tests/test_carstate_buttons.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_stopping.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_jerk.py \
             openpilot/selfdrive/controls/tests/test_desire_helper.py \
             openpilot/system/tests/test_c3_agnos_manifest.py
+      # Model/runtime tests alter Python import paths. Bluetooth also imports
+      # the root tools namespace, so run its complete suite in a fresh process
+      # rather than inheriting the model test process's module cache.
+      - name: Check Bluetooth integration in an isolated import context
+        env:
+          PYTHONPATH: .:opendbc_repo
+        run: >-
+          python -m pytest --noconftest -o addopts='' -q
+          openpilot/selfdrive/carrot/bluetooth/tests
 
   model_web:
     name: Model and Bluetooth web controls
