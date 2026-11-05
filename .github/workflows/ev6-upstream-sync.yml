@@ -109,7 +109,7 @@ jobs:
           python-version: '3.12'
       - name: Merge only the tested, still-current PR
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
           PR_NUMBER: ${{ needs.prepare.outputs.pr }}
           BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}

@@ -32,10 +32,38 @@ GitHub merge request remain subject to GitHub's PR merge/protection behavior;
 the controller is not a replacement for strict branch protection rules.
 
 The repository must enable Actions and allow GitHub Actions to create pull
-requests. It uses the built-in `GITHUB_TOKEN` with per-job permissions; no PAT,
-Cloudflare account, or separately stored credential is needed. CI is invoked
+requests. Preparation and tests use the built-in `GITHUB_TOKEN` with per-job
+permissions. The final merge uses the repository secret `UPSTREAM_SYNC_TOKEN`
+when configured, otherwise it tries the built-in token. The secret is available
+only to the separate merge controller, never to candidate tests. CI is invoked
 directly as a reusable workflow, so integration does not depend on push/PR
 events recursively triggering new runs with `GITHUB_TOKEN`.
+
+## One-time merge credential
+
+On 2026-11-05, every validation job in run `41993713896` passed, including the
+native build, settings compatibility and isolated Bluetooth checks. GitHub
+rejected the built-in token at the final PR merge with HTTP 403, despite
+`contents: write` and `pull-requests: write`. There were no branch-protection
+rules. The documented repository merge endpoint also rejected the same token
+in verification run `41995499940` (`contents=write` accepted-permissions header).
+The precise additional authorization decision is not exposed in that response;
+do not describe it as a proven Git conflict or failed CI. The update includes
+workflow changes. A normal owner-authenticated merge of the same tested heads
+succeeded as PR #1, commit `f52782f93e89789567a27e7f4c630cc45936ab00`, with its
+resulting tree and parents verified. No desktop credential was copied to Actions.
+
+For unattended merges, create a fine-grained GitHub personal access token owned
+by `huukuujuu`, restricted to `huukuujuu/openpilot`, with repository permissions
+Contents, Pull requests and Workflows set to Read and write. Give it an expiry
+and renew the repository secret when needed. Save its value under Settings >
+Secrets and variables > Actions > New repository secret, with the exact name
+`UPSTREAM_SYNC_TOKEN`. Never commit the token or paste it into a PR/chat. The
+workflow automatically picks it up on the next run; no source edit is needed.
+An appropriately scoped GitHub App installation token is another option for
+long-lived administration. The unattended merge credential must be verified
+after registration; the built-in-token denial remains a known platform limit
+for this tested PR rather than evidence that every GitHub-token merge fails.
 
 To pause, disable `EV6 upstream sync` in Actions. To handle a conflict, inspect
 the PR and merge report, resolve the actual changes in a local integration
