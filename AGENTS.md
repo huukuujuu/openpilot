@@ -1,5 +1,64 @@
 # Repository memory
 
+- On 2026-11-06, owner requests voice control of Carrot Web Tools buttons and
+  novice-readable code-entry instructions. Relay0.7.0 adds separate carrot.tools
+  consent plus a stationary-issued local grant; existing scopes never expand.
+  Fixed actions use existing Tools jobs: GitPull/sync/HEAD reset, reboot/rebuild,
+  calibration reset, deletion, backup, tmux capture/upload request and explicit
+  screen-record on/off. Prepare60s -> explain effect -> follow-up confirmation ->
+  consume/commit; maintenance rechecks parked/disengaged at dispatch. No shell,
+  supplied paths/URLs/commit targets. File/QR/clipboard/repository-reset selection
+  remains on the phone. Panels open through existing UI. Reboot/upload/recording
+  acceptance is not actual completion; no replay after unknown/expired delivery.
+  Job status is owner-bound and returns no logs/backups/IDs. Local job ownership
+  is in-memory; after server restart inspect Tools history, do not reissue.
+  Setup now separates first registration from Plugins > Installed > CarrotAssist
+  > Reconnect; open approval page BEFORE creating code, paste only into that form,
+  never mini-mode chat. App labels/KO+EN guides/Wiki clarify Play Store, expiry,
+  offline state and new permission. NAS0.7.0 built/started exit0, health and OAuth
+  discovery verified. API63/MCP23/focused web8 and isolated build/Ruff pass.
+  No APK change, no live vehicle maintenance/drive test or device update; owner
+  must parked GitPull/restart/reload and add Tools permission on both sides.
+
+- On 2026-11-06 voice setup follow-up, owner reaches real OAuth consent but reports
+  invalid/expired code. Reproduced one possible cause: regenerate account code at
+  initial browser lease299s, claim2s later rejects despite298s code validity.
+  Relay0.6.1 extends only unpaired browser lease to newly issued account deadline;
+  sweeper uses that lease, legacy chat-code expiry remains unchanged. Two new
+  regressions plus existing MCP suites20 pass. This does not establish that every
+  reported expiry shares this cause. Owner had also pasted codes in mini voice
+  chat and confused Play Store with setup link; consent code belongs only in the
+  Carrot HTTPS approval form reached via ChatGPT Plugins > Installed > CarrotAssist
+  > Reconnect. No phone/vehicle update needed for this server fix. Never request
+  that authorization codes be sent in chat or silently expand old scopes.
+
+- On 2026-11-06, owner requests one continuing ChatGPT voice conversation mixing
+  settings and direct lane/set-speed commands. Rejects per-command buttons and
+  short-local-STT/long-ChatGPT modes. Keep Android0.2.0/default assistant unchanged.
+  Owner is departing: prepare/push for later manual GitPull; do NOT update/restart
+  vehicle or execute live driving commands. Remote voice-start button was only
+  proposed; existing remote targets comma, phone invocation bridge is not added.
+  MCP0.6.0 loads VOICE_RULES.md, adds separately consented carrot.drive and a
+  separate local stationary-issued grant. Old grants never expand. Clear current
+  commands avoid extra conversational confirmation; platform approvals remain.
+  Existing lane FSM owns motion with fresh state, BSD/geometry/torque/driver gates,
+  Tesla real signal acknowledgement; no synthesized physical/DM input. Speed_up
+  uses RES/+ handling, down subtracts an explicit amount, set preserves target;
+  active supported longitudinal control only, never engages lateral/control.
+  Single request, relay5s/local1s freshness, lane preparation3s, duplicate guard10s,
+  no replay after expiry/restart/uncertain feedback. Completion requires lane
+  crossing plus FSM finish; set-speed readback is not measured vehicle speed.
+  Missing result-file IO cannot restore a consumed rejection. Wakeable polling
+  reduces delivery wait, not ChatGPT latency. Fix0.5.1 strict MCP result rejecting
+  device step_note. PC new controller20/API49/MCP18/web8, isolated build/Ruff pass.
+  Linux Signal CI42202066904 passes1644/362subtests +131,40skips; Jetson CI42202066820
+  also passes. Full general build CI remains separate. Runtime owner hashes let
+  revocation cancel pending requests even after a web-server restart.
+  NAS0.6.0 built/started exit0 and public health/discovery verify new scope; owner's
+  driving grant has NOT been added and actual spoken road operation is untested.
+  Full parked device restart needed after GitPull, not web-only reload. No API/key
+  or APK change. KO/EN guides and Wiki describe experimental scope and setup.
+
 - On 2026-11-06, owner explicitly requests supported driving-setting edits while
   moving. Supersedes the CarrotAssist onroad allowlist below: catalog edits may
   prepare/commit onroad; only initial local permission needs parked/disengaged

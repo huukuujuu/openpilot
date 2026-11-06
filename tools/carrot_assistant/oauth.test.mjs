@@ -27,10 +27,10 @@ async function start(dir, port = 0) {
   async function register(redirect = callback) {
     return post('/register', { redirect_uris: [redirect], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] });
   }
-  async function begin(client, settings = false) {
+  async function begin(client, settings = false, drive = false, tools = false) {
     const verifier = randomBytes(32).toString('base64url');
     const response = await fetch(`${base}/authorize?${new URLSearchParams({ client_id: client.client_id, response_type: 'code', redirect_uri: callback,
-      code_challenge_method: 'S256', code_challenge: digest(verifier), state: 'test-state', resource: `${base}/account/mcp`, scope: settings ? 'carrot.screen carrot.settings' : 'carrot.screen' })}`, { redirect: 'manual' });
+      code_challenge_method: 'S256', code_challenge: digest(verifier), state: 'test-state', resource: `${base}/account/mcp`, scope: ['carrot.screen', ...(settings ? ['carrot.settings'] : []), ...(drive ? ['carrot.drive'] : []), ...(tools ? ['carrot.tools'] : [])].join(' ') })}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
     // A real browser must permit the consent POST's cross-origin 303 callback.
     const policy = response.headers.get('content-security-policy');
@@ -40,10 +40,10 @@ async function start(dir, port = 0) {
     const flow = (await response.text()).match(/name="flow" value="([^"]+)"/)[1];
     return { verifier, flow, cookie: response.headers.get('set-cookie').split(';')[0] };
   }
-  async function link(client, key, settings = false) {
-    const auth = await begin(client, settings);
+  async function link(client, key, settings = false, drive = false, approveDrive = drive) {
+    const auth = await begin(client, settings, drive);
     const device = await (await browser('account_code', key)).json();
-    const approved = await form('/oauth/approve', { flow: auth.flow, code: device.account_code, ...(settings ? { settings_access: 'yes' } : {}) }, { Cookie: auth.cookie, Origin: base });
+    const approved = await form('/oauth/approve', { flow: auth.flow, code: device.account_code, ...(settings ? { settings_access: 'yes' } : {}), ...(approveDrive ? { drive_access: 'yes' } : {}) }, { Cookie: auth.cookie, Origin: base });
     assert.equal(approved.status, 303);
     const destination = new URL(approved.headers.get('location'));
     assert.equal(destination.searchParams.get('state'), 'test-state');
@@ -88,6 +88,46 @@ test('OAuth discovery, callback allowlist, consent CSRF, PKCE, resource and code
   } finally { await env.close(); }
 });
 
+test('Tools OAuth requires its own checkbox, preserves old grants and delivers bounded commands', async () => {
+  const env = await start();
+  const clients = [];
+  try {
+    const client = await (await env.register()).json();
+    const device = await (await env.browser('create')).json();
+    const oldLink = await env.link(client, device.browser_token, true);
+    const oldToken = await (await env.form('/token', oldLink.exchange)).json();
+    for (const consent of [false, true]) {
+      const flow = await env.begin(client, true, false, true);
+      const code = await (await env.browser('account_code', device.browser_token)).json();
+      const approved = await env.form('/oauth/approve', { flow: flow.flow, code: code.account_code,
+        settings_access: 'yes', ...(consent ? { tools_access: 'yes' } : {}) }, { Cookie: flow.cookie, Origin: env.base });
+      assert.equal(approved.status, 303);
+      const token = await (await env.form('/token', { grant_type: 'authorization_code', client_id: client.client_id,
+        code: new URL(approved.headers.get('location')).searchParams.get('code'), code_verifier: flow.verifier,
+        redirect_uri: callback, resource: `${env.base}/account/mcp` })).json();
+      assert.equal(token.scope.includes('carrot.tools'), consent);
+      const chat = await env.mcp(token.access_token); clients.push(chat);
+      const listed = await chat.callTool({ name: 'list_carrot_tool_actions', arguments: {} });
+      assert.equal(Boolean(listed.isError), !consent);
+      if (consent) {
+        await env.browser('poll', device.browser_token);
+        const pending = chat.callTool({ name: 'prepare_carrot_tool_action', arguments: { action: 'reboot' } });
+        await new Promise(r => setTimeout(r, 1000));
+        const poll = await (await env.browser('poll', device.browser_token)).json();
+        assert.equal(poll.tools_command.action, 'reboot');
+        assert.equal(poll.tools_command.operation, 'prepare');
+        const result = { status: 'prepared', action: 'reboot', title: 'Reboot', effect: 'Connection stops',
+          confirmation_required: true, proposal_id: 'p'.repeat(43), expires_in_seconds: 60 };
+        assert.equal((await env.browser('tools_ack', device.browser_token, { id: poll.tools_command.id, result })).status, 200);
+        assert.deepEqual((await pending).structuredContent.result, result);
+      }
+    }
+    const refreshed = await (await env.form('/token', { grant_type: 'refresh_token', client_id: client.client_id,
+      refresh_token: oldToken.refresh_token, resource: `${env.base}/account/mcp` })).json();
+    assert.equal(refreshed.scope.includes('carrot.tools'), false);
+  } finally { for (const client of clients) await client.close(); await env.close(); }
+});
+
 test('fresh MCP conversations resolve only the authenticated browser, survive restart and revoke', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'carrot-oauth-'));
   let env = await start(dir);
@@ -99,7 +139,9 @@ test('fresh MCP conversations resolve only the authenticated browser, survive re
     const ta = await (await env.form('/token', la.exchange)).json(), tb = await (await env.form('/token', lb.exchange)).json();
     const chatA = await env.mcp(ta.access_token), chatB = await env.mcp(tb.access_token); sdk.push(chatA, chatB);
     const listed = (await chatA.listTools()).tools;
-    assert.equal(listed.length, 11); assert.equal(listed.some(t => t.name === 'connect_carrot_web'), false);
+    assert.equal(listed.length, 20); assert.equal(listed.some(t => t.name === 'connect_carrot_web'), false);
+    assert.equal((await chatA.callTool({ name: 'request_carrot_drive', arguments: { action: 'lane_left' } })).isError, true);
+    assert.equal((await chatA.callTool({ name: 'get_carrot_drive_request', arguments: {} })).isError, true);
     assert.equal((await chatA.callTool({ name: 'read_carrot_setting_value', arguments: { name: 'AutoBlinkerControl' } })).isError, true);
     assert.deepEqual(Object.keys(listed.find(t => t.name === 'open_carrot_setting').inputSchema.properties), ['name']);
     const opened = await chatA.callTool({ name: 'open_carrot_setting', arguments: { name: 'AutoBlinkerControl' } });
@@ -144,6 +186,38 @@ test('device authorization code expiry, single use and legacy pairing preservati
   assert.throws(() => bridge.accountStatus(a.browser_token));
   bridge.browser(a.browser_token, origin, 'disconnect');
   assert.throws(() => bridge.accountStatus(identity.id));
+});
+
+test('driving scope needs explicit consent and cannot be added by refreshing a settings grant', async () => {
+  const env = await start(); const clients = [];
+  try {
+    const registered = await (await env.register()).json();
+    const browser = await (await env.browser('create')).json();
+    const declined = await env.link(registered, browser.browser_token, true, true, false);
+    const noDrive = await (await env.form('/token', declined.exchange)).json();
+    assert.equal(noDrive.scope, 'carrot.screen carrot.settings');
+    assert.equal((await env.form('/token', { grant_type: 'refresh_token', client_id: registered.client_id,
+      refresh_token: noDrive.refresh_token, resource: `${env.base}/account/mcp`, scope: 'carrot.screen carrot.settings carrot.drive' })).status, 400);
+    const oldChat = await env.mcp(noDrive.access_token); clients.push(oldChat);
+    const approved = await env.link(registered, browser.browser_token, true, true);
+    const token = await (await env.form('/token', approved.exchange)).json();
+    assert.equal(token.scope, 'carrot.screen carrot.settings carrot.drive');
+    assert.equal((await oldChat.callTool({ name: 'request_carrot_drive', arguments: { action: 'speed_up' } })).isError, true);
+    const chat = await env.mcp(token.access_token); clients.push(chat);
+    const listed = (await chat.listTools()).tools;
+    const annotation = listed.find(t => t.name === 'request_carrot_drive').annotations;
+    assert.equal(annotation.readOnlyHint, false);
+    assert.equal(annotation.destructiveHint, true);
+    const waitingBrowser = env.browser('poll_wait', browser.browser_token);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const pending = chat.callTool({ name: 'request_carrot_drive', arguments: { action: 'speed_set', value: 100 } });
+    const poll = await (await waitingBrowser).json();
+    assert.equal(poll.drive_command.action, 'speed_set');
+    assert.equal(poll.drive_command.value, 100);
+    await env.browser('drive_ack', browser.browser_token, { id: poll.drive_command.id,
+      result: { id: poll.drive_command.id, status: 'rejected', reason: 'cruise_inactive_or_driver_override' } });
+    assert.equal((await pending).structuredContent.result.status, 'rejected');
+  } finally { await Promise.all(clients.map(c => c.close())); await env.close(); }
 });
 
 test('corrupt OAuth state and failed client persistence fail closed', async () => {

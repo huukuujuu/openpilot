@@ -14,9 +14,14 @@ Codes are single-use, 80-bit secrets valid for five minutes; the connection does
 not expire in five minutes. New chats resolve the approved web session from the
 validated token, without a caller-selected user or device ID.
 
+Relay0.6.1 fixes a fresh approval code expiring with an older unpaired browser
+lease. Each newly issued account code now has its full five-minute window;
+renewal invalidates its predecessor without extending the legacy chat code.
+Existing authenticated connections and permissions are unchanged.
+
 `carrot.screen` permits search/explanation/navigation. `carrot.settings` is an
-additional, explicitly selected consent scope for live reads and changes. Old
-grants and refresh tokens remain screen-only. The device must also issue a local
+additional, explicitly selected consent scope for live reads and changes. Existing
+grants and refresh tokens retain their original scopes. The device must also issue a local
 grant while stationary/disengaged. That grant stays in WebView storage and goes
 only to same-origin device endpoints, never to the relay or ChatGPT.
 
@@ -33,7 +38,26 @@ All supported catalog edits, including driving settings, may be confirmed and
 applied onroad. Initial authorization still requires stationary/disengaged state.
 Saving does not change when each setting takes effect in the vehicle.
 Driver-monitoring disabling is excluded.
-Real-time driving commands and log uploads are unsupported.
+Driving-record uploads are unsupported. Experimental driving requests use separate
+`carrot.drive` consent and a separate stationary-issued local grant. Existing
+tokens never gain this scope automatically. `VOICE_RULES.md` is loaded as MCP
+instructions: one continuing conversation, no per-command button/mode switch,
+no added conversational confirmation for clear current driving intents, no
+invented deceleration target, and truthful acknowledgement versus completion.
+Platform tool approvals still apply; driving tools are marked as state-changing.
+
+`request_carrot_drive` supports lane_left/right, remote-equivalent speed_up,
+explicit speed_down and speed_set (km/h). `get_carrot_drive_request` only observes.
+Delivery expires in5s, local controller consumption in1s. Pending lane start
+expires in3s, active observation in20s. The relay deduplicates identical calls
+and rejects other calls within10s; one request at a time. No pending work survives
+restart. Local request IDs prevent replay after ambiguous delivery. The existing
+lane FSM owns motion; fresh state, BSD, lane geometry, driver priority and torque
+requirements remain. Speed cannot engage assistance or impersonate attention input.
+Terminal lane completion also requires observed crossing. Revocation cancels
+pending preparation, not an already-running steering trajectory.
+Full device restart is required; web-only restart is insufficient. No APK update.
+PC controller/transport tests are not on-road voice validation.
 
 Requests expire after 30 seconds; proposals after 60 seconds. Results are bounded
 and ephemeral. Duplicate delivery cannot repeat a committed write. Queued/unknown
@@ -65,6 +89,9 @@ and all account grants associated with that web connection.
 
 - Up to 1,000 paired sessions, 60 bridge creations/minute and 600 MCP requests/minute
   globally. Each visible paired tab polls every three seconds; hidden tabs pause.
+  Driving-enabled tabs use a wakeable7.5s long poll followed by a1s pause; pending
+  commands wake it immediately. This reduces idle requests and delivery wait,
+  not speech recognition/model latency. Simultaneous-client load remains untested.
 - These are limits, not proof of capacity for hundreds of simultaneous users.
   300 visible tabs imply about 100 polls/second plus CORS traffic. Monitor the NAS
   before expanding beyond a small beta.
@@ -95,3 +122,20 @@ the public catalog is `catalog.json`.
 Tests cover real SDK/OAuth/HTTP calls, scope separation, replay/revocation, restart
 persistence, expiry, bounds and ownership. Device and web suites run separately.
 Publishing this relay does not update existing device software.
+
+## Tools operations (0.7.0)
+
+`carrot.tools` requires explicit OAuth consent and a separate stationary-issued
+local grant. Existing refresh grants never acquire it. Fixed action/panel enums
+exclude arbitrary shell commands, paths, commits and URLs. Prepare returns a
+60-second owner-bound proposal; commit consumes it before dispatch and requires
+a follow-up user confirmation. Maintenance rechecks parked/disengaged state at
+dispatch. Screen recording uses explicit on/off targets, not a toggle.
+
+Existing Tools jobs provide execution and history. Relay results contain only
+action/status, never job logs or backup content. Reboot, rebuild, calibration reset
+and tmux upload report request acceptance, not completion. Expired/unknown results
+are never automatically retried. Job ownership is local and in-memory: after a
+web-server restart, inspect local Tools history instead of reissuing a job.
+File/QR/clipboard/repository-reset workflows require direct local input.
+No live vehicle maintenance acceptance test is run.

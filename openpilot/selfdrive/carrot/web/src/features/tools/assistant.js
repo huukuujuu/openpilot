@@ -1,6 +1,8 @@
 import { ASSISTANT_RELAY, ASSISTANT_SESSION_KEY, CHATGPT_INSTALL_URL, screenRequest, sessionValid } from './assistant_policy.js';
 import { copyPairingMessage } from './assistant_clipboard.js';
+import { executeDriveCommand, mountDriveAccess, revokeDriveAccess, driveAccessEnabled } from './assistant_drive.js';
 import { executeSettingCommand, mountSettingAccess, revokeSettingAccess } from './assistant_settings.js';
+import { executeToolsCommand, mountToolsAccess, revokeToolsAccess } from './assistant_tools.js';
 
 const text = (key, fallback) => globalThis.getUIText?.(`assistant_${key}`, fallback) || fallback;
 let session = null, completed = null, timer = null, polling = false, generation = 0;
@@ -30,6 +32,8 @@ async function request(operation, body = {}, current = session) {
   return response.json();
 }
 async function revoke() {
+  await revokeToolsAccess();
+  await revokeDriveAccess();
   await revokeSettingAccess();
   if (!session) return;
   try { await request('disconnect'); }
@@ -37,7 +41,7 @@ async function revoke() {
 }
 function schedule() {
   clearTimeout(timer);
-  if (session) timer = setTimeout(poll, document.hidden ? 10000 : 3000);
+  if (session) timer = setTimeout(poll, document.hidden ? 10000 : driveAccessEnabled() ? 1000 : 3000);
 }
 async function poll() {
   if (polling || !session) return;
@@ -48,7 +52,7 @@ async function poll() {
   polling = true;
   const current = session, epoch = generation;
   try {
-    const result = await request('poll', {}, current);
+    const result = await request(driveAccessEnabled() ? 'poll_wait' : 'poll', {}, current);
     if (epoch !== generation) return;
     const newlyLinked = result.account_linked && !session.account_linked;
     if (session.expires_at !== result.expires_at || session.connected !== result.connected || session.account_linked !== result.account_linked) {
@@ -64,9 +68,17 @@ async function poll() {
       const feedback = document.getElementById('assistantAccountFeedback');
       if (feedback) feedback.textContent = text('account_connected', 'Account connected · reusable in new voice chats');
     }
+    if (result.drive_command) {
+      const driveResult = await executeDriveCommand(result.drive_command);
+      if (driveResult && epoch === generation) await request('drive_ack', driveResult, current);
+    }
     if (result.settings_command && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) {
       const settingResult = await executeSettingCommand(result.settings_command);
       if (settingResult && epoch === generation) await request('settings_ack', settingResult, current);
+    }
+    if (result.tools_command && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) {
+      const toolsResult = await executeToolsCommand(result.tools_command);
+      if (toolsResult && epoch === generation) await request('tools_ack', toolsResult, current);
     }
     const command = result.command;
     if (!screenRequest(command)) return;
@@ -126,12 +138,21 @@ export function openAssistantDialog() {
     const copied = await copyPairingMessage(address);
     if (el('AccountFeedback')) el('AccountFeedback').textContent = copied ? text('copied', 'Copied') : text('copy_manual', 'Select the address and copy it manually.');
   };
-  account.prepend(summary, setupLink, address, copyAddress);
+  const reconnect = document.createElement('p'), codeWarning = document.createElement('strong');
+  reconnect.textContent = text('setup_reconnect', 'Already installed: ChatGPT > Plugins > Installed > CarrotAssist > Reconnect. Open the authorization page first, then return here for a fresh code.');
+  codeWarning.textContent = text('setup_code_warning', 'Paste codes only into the device authorization page, never a voice conversation. Google Play is only for installation.');
+  const firstSetup = document.createElement('details'), firstSummary = document.createElement('summary');
+  firstSummary.textContent = text('setup_first', 'First registration only: show instructions');
+  firstSetup.append(firstSummary, address, copyAddress, account.querySelector('#assistantAccountHelp'));
+  account.prepend(summary, codeWarning, reconnect, setupLink, firstSetup);
   el('Panel').prepend(account);
   mountSettingAccess(el('Panel'));
+  mountDriveAccess(el('Panel'));
+  mountToolsAccess(el('Panel'));
   label('AccountHelp', 'account_help', 'In ChatGPT, select + > Add custom MCP server. Name it CarrotAssist, paste the copied address into Server URL and choose OAuth under Authentication. Create and connect it, then enter the code below on the Carrot approval page. The five-minute limit is only for this code; your connection stays available. Do not send the code in chat.');
   label('AccountPair', 'account_pair', 'Create mini-mode connection code');
   label('AccountCodeLabel', 'account_code', 'Device authorization code · expires in 5 minutes');
+  el('AccountCodeLabel').style.cssText = 'display:block;margin-top:8px';
   label('AccountCopy', 'account_copy', 'Copy authorization code');
   el('AccountCopy').onclick = async () => {
     const field = el('AccountCode');
