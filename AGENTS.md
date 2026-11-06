@@ -1,5 +1,63 @@
 # Repository memory
 
+- On 2026-11-06, owner explicitly requests supported driving-setting edits while
+  moving. Supersedes the CarrotAssist onroad allowlist below: catalog edits may
+  prepare/commit onroad; only initial local permission needs parked/disengaged
+  state. Keep denied internal/driver-monitoring switches, scope/origin grants,
+  expiry, user confirmation, current-value/definition rechecks and readback/history.
+  Owner reports CruiseMaxVals0 250 ->240 incorrectly proposed241: min=1/unit=5
+  was mistakenly treated as a value lattice. Unit is a web button increment;
+  preserve any in-range explicit integer; round relative calculations to integers
+  (half away from zero), reject fractional absolute requests. MCP0.5.1 explains
+  this to ChatGPT. No APK change needed. Python21/MCP14/web4 and isolated build
+  pass; moving-state tests use fakes, not actual driving or live acceleration edits.
+
+- On 2026-11-06, owner authorizes CarrotAssist public beta with confirmed setting
+  changes, automatic update checks, KO/EN guides and Wiki. Android 0.2.0/code7
+  retains prototype signing identity; release APK SHA256
+  c05c86f2312aa46aaa05bd1ea73f39066c6a7cc49ace88fd3399491bbf433968.
+  Release carrot-assist-v0.2.0 and separate carrot-assist-updates/update.json
+  are published without changing the repository's general Latest release.
+  NAS carrot-mcp 0.5.0/account OAuth adds carrot.settings only by new consent;
+  existing permissions never expand silently. Hashed local origin-bound grant,
+  single-setting read, 60s proposal, explicit confirmation, fresh state and value
+  recheck, readback and voice-source history guard writes. Only display/HUD
+  brightness and alert volume may change onroad; other supported integer settings
+  need fresh stationary/disengaged state. No real-time vehicle commands or logs.
+  Owner's parked device verified through ChatGPT tools: brightness90 ->95 ->90;
+  direct Params readback agrees. Phone updated via GitHub verifier/Android installer
+  code6 ->7; pairing and local grant survive. Tool refresh after reauthorization
+  exposes all11 tools. Actual voice-overlay navigation was tested separately;
+  setting writes used ChatGPT text tools, not a spoken-road acceptance test.
+  Fix already-open setting rows/cache after applied readback. Python41, MCP14,
+  Android discovery33/update15, focused web15 and docs validation pass.
+  Free ChatGPT unverified; Gemini custom MCP US/English restrictions and Live
+  unverified, no Gemini/legacy Assistant tool integration. No AI API/key on relay;
+  each user's ChatGPT allowance applies. Hundreds of clients/load unverified.
+  See docs/user/{ko,en}/carrot-assist.md and Wiki Guide-CarrotAssist. Preserve
+  private signing material outside Git. Web UI setup uses connection-page/copy
+  buttons and actual menu names instead of unexplained OAuth instructions.
+  Post-update repeated test applied95; ChatGPT tool-approval delays expired
+  successive restoration proposals, then the owner took a phone call. Restore90
+  through the normal local param_set API after fresh parked check; direct Params
+  verifies90. Do not claim the second restoration completed through ChatGPT or
+  that changed-row display was physically verified after the last cache fix.
+  ChatGPT may require Allow once in addition to conversational confirmation;
+  guides disclose this, and fully hands-free changes remain unverified.
+
+- On 2026-11-06, owner reports eGPU Light/N16 first-inference AMD-7/hang becoming
+  permanently rejected. Prior committed code reproduces next-boot denial;
+  pinned N16/Flip/Light/Light2 runtime archives hash-check and map-7 to USB wait
+  timeout. Recognize exact terminal-7/hang only for those runtimes, retain this
+  boot quarantine/internal fallback, allow matching previous-boot verified load.
+  No expansion of live recovery. Migrate old reports, keep diagnostics and all
+  hash/contract/output/smoke gates. Web KO/EN shows cause and permits offroad-only
+  one-shot next-boot verification, bound to model/runtime/failure/boot identity;
+  never directly deletes markers, starts GPU or reboots. Desktop416+web19 pass,
+  isolated web build/Ruff pass. No vehicle/CAN/model/Jetson writes. Initial fault
+  and physical cure unverified; reporter JSONs not supplied. GitPull/full comma
+  reboot. See docs/egpu_rejection_recovery_20261106.md.
+
 - On 2026-11-05, owner reports ATC indicator-associated warnings while driving,
   then explicitly requests PC-only fix/test/push and will apply after exercise.
   Full-cereal NAS rlog 11a6/30: receiver unavailable/lease_lost at19:47:56.001,
