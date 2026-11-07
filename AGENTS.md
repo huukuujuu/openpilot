@@ -1,5 +1,40 @@
 # Repository memory
 
+- Voice lane changes retain normal admission on all supported vehicles, with or
+  without indicator hardware. Bind optional signaling once per request to an active
+  receiver on the current vehicle (AutoBlinkerControl=2), a supported native output,
+  or the existing Tesla path. After selection, timeout or loss never falls back to
+  unsignaled motion. External BLE/SPAS support follows receiver checks. PEAK/CANable
+  retains its verified CAN profile. No live maneuver or actual lamp test.
+
+- 2026-11-07 mini voice follow-up: two correctly transcribed “왼쪽으로 차로 변경”
+  refusals with no visible tool call; authenticated readback can_drive=true,
+  browser_online=true, last drive request none. Native greeting verifies web
+  pairing/connectivity only. The phone disabled both Android assist structure
+  and screenshot sharing; neither was changed. Account context in relay 0.7.8
+  reports vehicle telemetry as unobserved rather than hard-coded disconnected.
+  No live maneuver; this does not force plugin activation in a new mini session.
+
+- CarrotAssist 0.2.5 (code12) startup TTS announces an available device Git update once;
+  the native greeting ends before showAssist. No startup question, affirmative handler,
+  maintenance proposal or reboot. The optional carrot.tools grant also supports a fixed
+  Naver Map launch through updated Carrot Web and the visible Android wrapper. Only
+  the installed com.nhn.android.nmap launcher can be requested. Report OS acceptance
+  separately from the map actually appearing. No claim of live spoken end-to-end testing.
+
+- CarrotAssist 0.2.4 (code11) moves the microphone into a draggable 68dp
+  in-app button with normalized saved coordinates. Toolbar device-name settings
+  provide opt-in auto-open once per device discovery, with a greeting/safe-drive
+  message and GitPull/restart question when current device Git status verifies a
+  nondiverged update, even while driving. No Git or reboot is executed at startup.
+  Manual taps skip the greeting. Both paths inspect the active WebView session
+  before opening showAssist, with up to 3 transient attempts and foreground
+  cancellation. Startup Android assist content is optional; MCP cannot suppress
+  all ChatGPT mini preambles. Relay0.7.6 returns explicit no-submit/no-retry
+  outcomes for duplicate/conflicting requests without queuing them. Phone tested
+  button drag, tap and mini opening; emulator checks include saved position and
+  resize. Temporary relay downtime produced a real startup alert during deployment.
+
 - On 2026-11-07 voice follow-up, actual mini conversations showed an unsupported
   response without visible tools and a later 14-second turn with a lane tool call
   and unnecessary dashboard question. Current account can_drive=true; last relay

@@ -76,6 +76,14 @@ In the 2026-11-07 test, refreshing old tool descriptions still left a ChatGPT ap
 
 ### Talk while touching Carrot Web
 
+In CarrotAssist 0.2.4, drag the orange microphone to keep it in your preferred position. Tap to verify the current Carrot Web account link and online status, then open the default assistant overlay. If verification fails, choose **Check again** or **Open assistant only**. Invoking the assistant directly with the phone’s side key skips the app’s startup check.
+
+Tap the device name at the top and enable **Start the voice assistant when Carrot Web connects**. Transient startup connection failures get up to three attempts in total. On connection the app greets you once, wishes you a safe drive and opens the assistant overlay. From version 0.2.5, an available Git update is announced once. No reply is needed. A manual microphone tap skips the greeting.
+
+The startup greeting confirms that Carrot Web is online and linked to your account. Look for a CarrotAssist tool call in the reply to see whether the new mini conversation used it. If you receive only a generic reply, ask while parked, “Use CarrotAssist to report the last driving request.” This status check does not request a maneuver.
+
+With CarrotAssist 0.2.5, updated Carrot Web and Tools access, say **“Open Naver Map”** in the mini voice window to launch the installed Android app.
+
 If touching the web closes the small assistant overlay and ends voice:
 
 1. Enable **ChatGPT Settings → Voice → Background conversations**.
@@ -152,6 +160,8 @@ Lane commands respect active assistance, speed, lane geometry, measured blind sp
 Relay delivery expires after five seconds; controller consumption requires an intent no older than one second. Pending lane preparation expires after three seconds. Only one driving request runs at once. During ten seconds after a request, identical calls return its result and other calls can be rejected to prevent duplicate maneuvers. Expired, failed or uncertain requests never retry automatically. An ambiguous “go slowly, there is a car ahead” needs a specific target; it does not trigger indefinite braking until radar detects a lead.
 
 Running and completed are distinct. Lane completion requires both controller completion and observed lane crossing. **Revoke driving commands** prevents new commands and cancels pending preparation; it does not force an ongoing steering maneuver to abort. A phone voice-start action has not been added to the existing Bluetooth remote.
+
+Voice lane changes left and right use the usual lane-change conditions even without an indicator device. With supported native turn-signal control, or a responding external indicator on this vehicle with **Automatic turn signals** set to **2**, the maneuver waits for the requested lamp. If the device disconnects after its selection or the adjacent lane becomes blocked during preparation, that request ends.
 
 ## Use Tools buttons by voice
 
