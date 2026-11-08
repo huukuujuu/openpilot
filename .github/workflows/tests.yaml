@@ -281,6 +281,7 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_cluster_autorun.py \
             openpilot/selfdrive/car/tests/test_carrot_cruise_buttons.py \
             opendbc_repo/opendbc/car/volkswagen/tests/test_carstate_buttons.py \
+            opendbc_repo/opendbc/car/volkswagen/tests/test_volkswagen.py::test_golf_mk7_wheel_speed_update \
             opendbc_repo/opendbc/car/hyundai/tests/test_stopping.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_jerk.py \
             openpilot/selfdrive/controls/tests/test_desire_helper.py \
