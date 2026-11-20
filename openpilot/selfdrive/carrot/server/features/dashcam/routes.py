@@ -523,16 +523,20 @@ async def api_dashcam_upload_start(request: web.Request) -> web.Response:
 
 
 async def api_dashcam_upload_test(request: web.Request) -> web.Response:
+  base_url, include_links = "", True
   try:
-    base_url, token = upload.upload_target_settings()
+    base_url, token, include_links = upload.upload_target_settings()
     result = await check_web_upload_health(base_url, token)
     if result.get("ok") and not token:
       await create_web_upload_session(base_url, upload.current_upload_metadata(), "test")
       result["session"] = "automatic"
     status = 200 if result.get("ok") else 502
-    return web.json_response({"target": "web", "url": base_url, **result}, status=status)
+    if not include_links and result.get("error"):
+      result["error"] = str(result["error"]).replace(base_url, "private upload server")
+    return web.json_response({"target": "web", "url": base_url if include_links else "", **result}, status=status)
   except Exception as e:
-    return web.json_response({"ok": False, "error": str(e)}, status=500)
+    error = str(e) if include_links else str(e).replace(base_url, "private upload server")
+    return web.json_response({"ok": False, "error": error}, status=500)
 
 
 async def api_dashcam_upload_job(request: web.Request) -> web.Response:

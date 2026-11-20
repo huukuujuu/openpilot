@@ -536,6 +536,8 @@ window.CarrotTranslations.register("ko", {
     web_settings_upload: "웹 업로드",
     web_upload_url: "업로드 서버",
     web_upload_url_desc: "자동 세션으로 로그를 전송할 HTTPS API 주소",
+    dashcam_upload_url: "대시캠 전용 업로드 서버",
+    dashcam_upload_url_desc: "대시캠 로그를 보낼 HTTPS 주소입니다. 연결 시험은 대시캠 목적지를 확인합니다.",
     web_upload_test: "연결 시험",
     web_upload_testing: "연결 확인 중...",
     web_upload_test_ok: "연결 정상",

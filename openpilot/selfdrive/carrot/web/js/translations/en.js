@@ -520,6 +520,8 @@ window.CarrotTranslations.register("en", {
     web_settings_upload: "Web upload",
     web_upload_url: "Upload server",
     web_upload_url_desc: "HTTPS API address; sessions are created automatically",
+    dashcam_upload_url: "Dashcam upload server",
+    dashcam_upload_url_desc: "Optional HTTPS address for dashcam uploads. Test connection checks the dashcam destination.",
     web_upload_test: "Test connection",
     web_upload_testing: "Testing...",
     web_upload_test_ok: "Connection OK",

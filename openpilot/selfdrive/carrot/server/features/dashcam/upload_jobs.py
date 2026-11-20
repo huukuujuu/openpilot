@@ -338,14 +338,21 @@ async def run_upload_segments(
   segments: list[str], job: dict[str, Any] | None = None, *, include_all_files: bool = False,
 ) -> dict[str, Any]:
   params = Params() if HAS_PARAMS else None
-  base_url, token = upload.upload_target_settings()
+  base_url, token, include_links = upload.upload_target_settings()
   meta = upload.upload_metadata(params)
   device_id = upload_device_id(meta)
   car_selected = meta.get("carName") or "none"
   storage_directory = f"{car_selected} {device_id}".strip()
   if not token:
-    token = await create_web_upload_session(base_url, meta, "dashcam")
+    try:
+      token = await create_web_upload_session(base_url, meta, "dashcam")
+    except Exception as e:
+      if include_links:
+        raise
+      raise RuntimeError(str(e).replace(base_url, "private upload server")) from None
   remote_base_path = f"{base_url}/routes/{storage_directory}/".replace("\\", "/")
+  if not include_links:
+    remote_base_path = ""
   total = len(segments)
   results: list[Any] = [None] * total  # filled by index so order matches input
 
@@ -527,7 +534,7 @@ async def run_upload_segments(
           "route": route_name(segment),
           "segmentIndex": segment_index(segment),
           "ok": bool(ok),
-          "remotePath": f"{remote_base_path}{segment}",
+          "remotePath": f"{remote_base_path}{segment}" if include_links else "",
           "files": files,
         }
         if job:
@@ -540,12 +547,12 @@ async def run_upload_segments(
           "route": route_name(segment),
           "segmentIndex": segment_index(segment),
           "ok": False,
-          "remotePath": f"{remote_base_path}{segment}",
+          "remotePath": f"{remote_base_path}{segment}" if include_links else "",
           "files": files,
-          "error": str(e),
+          "error": str(e) if include_links else str(e).replace(base_url, "private upload server"),
         }
         if job:
-          append(job, f"[{idx}/{total}] {segment} FAILED: {e}")
+          append(job, f"[{idx}/{total}] {segment} FAILED: {results[idx0]['error']}")
     # post-upload bookkeeping runs synchronously (atomic between awaits)
     completed += 1
     if job:
@@ -584,35 +591,23 @@ async def run_upload_segments(
   if job:
     progress(
       job,
-      message="Sending notification",
+      message="Saving upload result",
       current=total,
       total=total,
       percent=UPLOAD_NOTIFYING_START_PERCENT,
       phase=UPLOAD_PHASE_NOTIFYING,
       phase_current=0,
-      phase_total=2,
+      phase_total=1,
     )
   ensure_not_canceled(job)
-  response_payload["webComplete"] = await send_web_upload_complete(
+  complete = await send_web_upload_complete(
     base_url,
     token,
     response_payload,
   )
-  if job:
-    progress(
-      job,
-      message="Sending notification",
-      current=total,
-      total=total,
-      percent=UPLOAD_NOTIFYING_END_PERCENT,
-      phase=UPLOAD_PHASE_NOTIFYING,
-      phase_current=1,
-      phase_total=2,
-    )
-  response_payload["discord"] = await upload.send_discord_webhook(
-    upload.discord_webhook_url(params),
-    response_payload,
-  )
+  if not include_links and complete.get("error"):
+    complete["error"] = str(complete["error"]).replace(base_url, "private upload server")
+  response_payload["webComplete"] = complete
   if job:
     progress(
       job,
@@ -621,8 +616,8 @@ async def run_upload_segments(
       total=total,
       percent=UPLOAD_NOTIFYING_END_PERCENT,
       phase=UPLOAD_PHASE_NOTIFYING,
-      phase_current=2,
-      phase_total=2,
+      phase_current=1,
+      phase_total=1,
     )
   return response_payload
 

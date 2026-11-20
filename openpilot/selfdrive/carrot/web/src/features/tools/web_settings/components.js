@@ -41,10 +41,11 @@ globalThis.WebSettingsComponents = (() => {
 })();
 
 globalThis.WebSettingsComponents.register("web-upload", {
-  settingKeys: ["web_upload_url"],
+  settingKeys: ["web_upload_url", "dashcam_upload_url"],
   render() {
     const text = (key, fallback) => getUIText(key) || fallback;
     const url = String(getWebSettingByKey("web_upload_url", "") || "");
+    const dashcamUrl = String(getWebSettingByKey("dashcam_upload_url", "") || "");
     return `
       <div class="web-upload-settings">
         <label class="web-settings-row web-settings-row--field">
@@ -53,6 +54,13 @@ globalThis.WebSettingsComponents.register("web-upload", {
             <span class="web-settings-row__desc">${escapeHtml(text("web_upload_url_desc", "HTTPS API base URL"))}</span>
           </span>
           <input class="web-settings-text" data-web-upload-field="web_upload_url" type="url" inputmode="url" value="${escapeHtml(url)}" />
+        </label>
+        <label class="web-settings-row web-settings-row--field">
+          <span class="web-settings-row__copy">
+            <span class="web-settings-row__title">${escapeHtml(text("dashcam_upload_url", "Dashcam upload server"))}</span>
+            <span class="web-settings-row__desc">${escapeHtml(text("dashcam_upload_url_desc", "Optional HTTPS address for dashcam uploads"))}</span>
+          </span>
+          <input class="web-settings-text" data-web-upload-field="dashcam_upload_url" type="password" autocomplete="off" value="${escapeHtml(dashcamUrl)}" />
         </label>
         <div class="web-upload-settings__actions">
           <button class="btn btn-secondary web-upload-settings__test" type="button">${escapeHtml(text("web_upload_test", "Test connection"))}</button>

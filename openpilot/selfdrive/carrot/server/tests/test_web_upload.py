@@ -357,8 +357,25 @@ def test_dashcam_upload_report_does_not_merge_nonconsecutive_segments():
   assert "### Open & Analyze" not in report
 
 
+def test_dashcam_destination_is_independent_of_shared_upload_settings(monkeypatch):
+  monkeypatch.setenv("CARROT_WEB_UPLOAD_URL", "https://shared-env.example")
+  monkeypatch.setenv("CARROT_WEB_UPLOAD_TOKEN", "shared-token")
+  settings = web_settings.sanitize_web_settings({
+    "web_upload_url": "https://shared.example",
+    "dashcam_upload_url": " https://private.example/upload-path/ ",
+  })
+  monkeypatch.setattr(upload, "read_web_settings", lambda: settings)
+
+  assert upload.upload_target_settings() == ("https://private.example/upload-path", "", False)
+  assert web_upload.web_upload_settings(settings) == ("https://shared-env.example", "shared-token")
+
+  settings.update(web_settings.sanitize_web_settings({"dashcam_upload_url": "http://insecure.example"}))
+  assert upload.upload_target_settings() == ("https://shared-env.example", "shared-token", True)
+
+
 @pytest.mark.parametrize("include_all_files", [False, True])
-def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, tmp_path, include_all_files):
+@pytest.mark.parametrize("include_links", [False, True])
+def test_dashcam_upload_completion_only_reports_to_upload_server(monkeypatch, tmp_path, include_all_files, include_links):
   segment = "00000cfb--69588de3d7--10"
   notifications = []
   uploaded_files = []
@@ -381,19 +398,12 @@ def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, 
     notifications.append(("web", base_url, token, payload["results"][0]["segment"]))
     return {"ok": True, "status": 200}
 
-  async def fake_discord(webhook_url, payload):
-    notifications.append(("discord", webhook_url, payload["shareText"]))
-    return {"configured": True, "ok": True, "status": 204}
-
   monkeypatch.setattr(upload_jobs, "HAS_PARAMS", False)
-  monkeypatch.setattr(upload, "upload_target_settings", lambda: ("https://upload.example", "session-token"))
+  monkeypatch.setattr(upload, "upload_target_settings", lambda: ("https://upload.example/private-key", "session-token", include_links))
   monkeypatch.setattr(upload, "upload_metadata", lambda params: {
     "carName": "TEST_CAR",
     "dongleId": "0123456789abcdef",
   })
-  monkeypatch.setattr(upload, "upload_share_text", lambda payload: "shared upload report")
-  monkeypatch.setattr(upload, "discord_webhook_url", lambda params: "https://discord.example/webhook")
-  monkeypatch.setattr(upload, "send_discord_webhook", fake_discord)
   monkeypatch.setattr(upload_jobs, "segment_dir", lambda value: str(tmp_path))
   monkeypatch.setattr(upload_jobs, "upload_folder_to_web", fake_upload_folder)
   monkeypatch.setattr(upload_jobs, "send_web_upload_complete", fake_web_complete)
@@ -412,10 +422,11 @@ def test_dashcam_upload_completion_notifies_web_server_and_discord(monkeypatch, 
 
   assert result["ok"] is True
   assert result["webComplete"] == {"ok": True, "status": 200}
-  assert result["discord"] == {"configured": True, "ok": True, "status": 204}
+  assert "discord" not in result
+  assert ("private-key" in result["shareText"]) is include_links
+  assert bool(result["results"][0]["remotePath"]) is include_links
   assert notifications == [
-    ("web", "https://upload.example", "session-token", segment),
-    ("discord", "https://discord.example/webhook", "shared upload report"),
+    ("web", "https://upload.example/private-key", "session-token", segment),
   ]
   assert uploaded_files == expected_files
   assert [item["name"] for item in result["results"][0]["files"]] == expected_files

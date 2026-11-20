@@ -427,6 +427,8 @@ window.CarrotTranslations.register("zh", {
     web_settings_upload: "Web upload",
     web_upload_url: "Upload server",
     web_upload_url_desc: "HTTPS API address; sessions are created automatically",
+    dashcam_upload_url: "行车记录上传服务器",
+    dashcam_upload_url_desc: "行车记录上传的可选 HTTPS 地址。连接测试检查行车记录的上传目标。",
     web_upload_test: "Test connection",
     web_upload_testing: "Testing...",
     web_upload_test_ok: "Connection OK",

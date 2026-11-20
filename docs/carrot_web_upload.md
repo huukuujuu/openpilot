@@ -16,14 +16,17 @@ forum entry. The automatic onroad report includes both `tmux.log` and
 `toggle_values.json`; exception and manual reports include the tmux log. A DSM
 failure does not redirect or suppress this independent Carrot Logs copy.
 
-In Carrot Web, **Tools > Web settings > Web upload** contains only:
+In Carrot Web, **Tools > Web settings > Web upload** contains:
 
 - Upload server (default: `https://upload.shind0.synology.me`)
-- Test connection
+- Dashcam upload server (optional HTTPS override for dashcam files and their completion manifest)
+- Test connection for the effective dashcam server
 
 An operator may override the base URL with `CARROT_WEB_UPLOAD_URL`. The
 `CARROT_WEB_UPLOAD_TOKEN` environment variable remains an operator-only escape
-hatch for a private server; it is not stored or shown in Carrot Web.
+hatch for a private shared server; it is not stored or shown in Carrot Web.
+The dashcam-only override requests its own session and does not reuse this token.
+The completion report omits the private upload address.
 
 Uploads use three concurrent HTTPS streams per device by default, configurable
 from one to six with `CARROT_WEB_UPLOAD_CONCURRENCY`. There is no bandwidth

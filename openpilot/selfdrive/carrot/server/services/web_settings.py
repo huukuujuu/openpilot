@@ -343,6 +343,14 @@ def _normalize_web_upload_url(value: Any) -> str:
     return DEFAULT_WEB_UPLOAD_URL
 
 
+def _normalize_dashcam_upload_url(value: Any) -> str:
+  try:
+    url = normalize_base_url(value)
+  except ValueError:
+    return ""
+  return url if url.startswith("https://") else ""
+
+
 def _normalize_stripped(value: Any) -> str:
   return str(value or "").strip()
 
@@ -448,6 +456,7 @@ WEB_SETTINGS_SPEC: List[_Field] = [
   _Field("kmap_overlay_curvature_color", "bool", False),
   _Field("kmap_map_type", "enum", "roadmap", choices={"roadmap", "satellite", "hybrid"}),
   _Field("web_upload_url", "str", DEFAULT_WEB_UPLOAD_URL, normalize=_normalize_web_upload_url),
+  _Field("dashcam_upload_url", "str", "", normalize=_normalize_dashcam_upload_url),
   # Remote support last-used settings, persisted so the owner's choices survive a
   # reload. Stored as strings via the enum type (numeric values are parsed back
   # to ints client-side). Command permission defaults to "approve_each" so a

@@ -106,7 +106,7 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
     "# Carrot Dashcam Upload",
     "### Upload",
     f"- Time: {payload.get('uploadedAt') or ''}",
-    f"- Path: {public_upload_url(payload.get('remoteBasePath'))}",
+    *([f"- Path: {public_upload_url(payload['remoteBasePath'])}"] if payload.get("remoteBasePath") else []),
     "### Device",
     f"- Car name: {meta.get('carName') or 'none'}",
     f"- DongleId: {meta.get('dongleId') or 'unknown'}",
@@ -116,8 +116,8 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
   ]
 
   runs = _consecutive_runs(visible_uploaded)
+  analysis_links = []
   if runs:
-    lines.append("### Open & Analyze")
     for run in runs:
       first_parts = _segment_parts(run[0])
       last_parts = _segment_parts(run[-1])
@@ -126,9 +126,12 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
         continue
       _, first_index = first_parts
       _, last_index = last_parts
-      lines.append(
+      analysis_links.append(
         f"- [Segments {first_index}–{last_index} ({len(run)} logs) · Web/Video/Tools]({url})",
       )
+
+  if analysis_links:
+    lines.extend(["### Open & Analyze", *analysis_links])
 
   lines.append("### Result")
   for item in visible_items:
@@ -151,15 +154,3 @@ def upload_message_lines(payload: dict[str, Any], max_results: int | None = None
 
 def upload_share_text(payload: dict[str, Any]) -> str:
   return "\n".join(upload_message_lines(payload)).strip()
-
-
-def discord_content(payload: dict[str, Any]) -> str:
-  content = "\n".join(upload_message_lines(payload, max_results=24)).strip()
-  if len(content) <= 1900:
-    return content
-
-  content = "\n".join(upload_message_lines(payload, max_results=10)).strip()
-  if len(content) <= 1900:
-    return content
-
-  return "\n".join(upload_message_lines(payload, max_results=3)).strip()[:1900]
