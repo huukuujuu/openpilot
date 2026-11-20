@@ -38,6 +38,36 @@ env:
   CI: 1
 
 jobs:
+  comma_connect:
+    name: comma Connect offline policy and C3 modem
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reconstruct exact upstream integration commit
+        if: inputs.merge_source != ''
+        env:
+          MERGE_SOURCE: ${{ inputs.merge_source }}
+          MERGE_TREE: ${{ inputs.merge_tree }}
+          MERGE_COMMIT: ${{ inputs.merge_commit }}
+        run: >-
+          python3 tools/upstream_sync/sync.py checkout
+          --source "$MERGE_SOURCE" --tree "$MERGE_TREE" --merge "$MERGE_COMMIT"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest pytest-mock requests
+      - run: >-
+          python -m pytest -q -c /dev/null --confcutdir=openpilot/system/tests
+          openpilot/system/tests/test_comma_connect.py
+          openpilot/system/tests/test_c3_modem.py
+          openpilot/system/tests/test_setup_download.py
+          openpilot/system/tests/test_agnos_download_cache.py
+          openpilot/common/tests/test_repo_update.py
+
   egpu_startup:
     name: eGPU selected-model startup
     runs-on: ubuntu-24.04
@@ -189,7 +219,38 @@ jobs:
           openpilot/selfdrive/carrot/server/tests/test_settings_schema.py
           openpilot/selfdrive/carrot/server/tests/test_params_compat.py
           openpilot/selfdrive/carrot/server/tests/test_setting_profiles.py
-      - name: Bosch provider regression tests
+      - name: Execute the SCons-built internal model and camera warps
+        run: python tools/modeld/check_cheddar_model.py openpilot/selfdrive/modeld/models/driving_tinygrad.pkl
+      - name: Check native offline cloud boundaries and C3 modem routing
+        env:
+          NATIVE_DEVICE_TESTS: '1'
+        run: >-
+          python -m pytest -o addopts='' -q
+          openpilot/system/tests/test_comma_connect_native.py
+          openpilot/system/tests/test_c3_modem.py
+          openpilot/system/athena/tests/test_registration.py
+      - name: Check Tesla stop solver, gesture and shared defaults
+        run: |
+          python -c "import openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc"
+          python -m pytest -o addopts='' -q \
+            openpilot/selfdrive/controls/tests/test_tesla_traffic_stop_integration.py \
+            openpilot/selfdrive/car/tests/test_tesla_three_finger.py \
+            openpilot/selfdrive/controls/tests/test_lateral_startup_control.py \
+            openpilot/selfdrive/controls/tests/test_controlsd_publish.py \
+            openpilot/common/tests/test_params.py::test_always_lateral_manager_preserves_existing_default_and_saved_choice
+      - name: PR580 startup and restored longitudinal control
+        run: |
+          python -m pytest -o addopts='' -q \
+            openpilot/system/tests/test_build_cache.py \
+            openpilot/system/tests/test_rebuild_cleanup.py \
+            openpilot/selfdrive/carrot/tests/test_t_follow.py \
+            openpilot/selfdrive/controls/tests/test_longitudinal_preview.py \
+            openpilot/selfdrive/controls/tests/test_longitudinal_preview_release.py \
+            openpilot/selfdrive/controls/tests/test_longitudinal_gap_recovery.py \
+            openpilot/selfdrive/controls/tests/test_longitudinal_braking_gap.py \
+            opendbc_repo/opendbc/car/hyundai/tests/test_stock_cruise_adopt.py \
+            opendbc_repo/opendbc/car/hyundai/tests/test_camera_set_speed_sync.py
+      - name: Bosch provider replay regression tests
         run: |
           python -m pytest -o addopts='' -q \
             opendbc_repo/opendbc/car/hyundai/tests/test_radar.py \
@@ -213,6 +274,7 @@ jobs:
           opendbc_repo/opendbc/car/hyundai/tests/test_navi_speedcam.py
           opendbc_repo/opendbc/car/hyundai/tests/test_section_average.py
           opendbc_repo/opendbc/car/hyundai/tests/test_speed_camera.py
+          opendbc_repo/opendbc/car/hyundai/tests/test_ev4_navi.py
           opendbc_repo/opendbc/car/hyundai/tests/test_blink_hold.py
           opendbc_repo/opendbc/car/hyundai/tests/test_blinker_stalks.py
           opendbc_repo/opendbc/car/hyundai/tests/test_ccnc_cluster.py
@@ -270,6 +332,7 @@ jobs:
             openpilot/selfdrive/modeld/tests/test_precompiled_validation.py \
             openpilot/system/tests/test_model_build_cache.py \
             openpilot/system/tests/test_proclog_smaps.py \
+            openpilot/system/tests/test_memory_trace.py \
             openpilot/system/tests/test_panda_firmware_version.py \
             openpilot/selfdrive/modeld/tests/test_generic_model_runtime.py \
             openpilot/selfdrive/modeld/tests/test_dmonitoring_artifact.py \
@@ -280,7 +343,9 @@ jobs:
             openpilot/selfdrive/carrot/tests/test_cluster_performance_safeguards.py \
             openpilot/selfdrive/carrot/tests/test_cluster_autorun.py \
             openpilot/selfdrive/car/tests/test_carrot_cruise_buttons.py \
+            openpilot/selfdrive/car/tests/test_cruise_timing.py \
             opendbc_repo/opendbc/car/volkswagen/tests/test_carstate_buttons.py \
+            opendbc_repo/opendbc/car/volkswagen/tests/test_volkswagen.py::test_golf_mk7_wheel_speed_update \
             opendbc_repo/opendbc/car/hyundai/tests/test_stopping.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_jerk.py \
             openpilot/selfdrive/controls/tests/test_desire_helper.py \
@@ -294,6 +359,7 @@ jobs:
         run: >-
           python -m pytest --noconftest -o addopts='' -q
           openpilot/selfdrive/carrot/bluetooth/tests
+          tools/carrot_b1
 
   model_web:
     name: Model and Bluetooth web controls

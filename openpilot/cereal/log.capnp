@@ -164,6 +164,10 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     systemReady @127;
     impactDetected @128;
     impactDashcamReboot @129;
+    teslaTrafficStopWarning @130;
+    teslaTrafficStopTakeover @131;
+    pandaCanFault @132;
+    stockSccFault @133;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -1119,6 +1123,7 @@ struct ModelDataV2 {
     indicatorPrepareSource @34 :Text;
     assistantLaneSignalId @35 :Text; # Set only after ordinary lane-change admission; direction is laneChangeDirection.
     assistantLaneSignalRoute @36 :Text; # Empty outside voice maneuvers, otherwise ordinary, native or the selected adapter instance.
+    laneChangeDouble @37 :Bool; # joongyu01: a double one-touch queued a second lane change (until it starts); cluster message
 
 
     deprecated :group {
@@ -1532,6 +1537,7 @@ struct ProcLog {
     memPssAnon @18 :UInt64;    # Pss_Anon — private anonymous (heap, stack)
     memPssShmem @19 :UInt64;   # Pss_Shmem — proportional MSGQ/tmpfs share
     memPssMonoTime @20 :UInt64; # scan start in monotonic ns; 0 means unavailable (also older logs)
+    memPrivateDirty @21 :UInt64; # bytes from the same completed scan; absent in older logs
   }
 
   struct CPUTimes {

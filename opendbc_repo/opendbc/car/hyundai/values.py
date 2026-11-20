@@ -89,6 +89,7 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_SPAS_BLINKERS = 4096
   PEDAL_INTERCEPTOR = 8192
   PEDAL_INTERCEPTOR_RAY = 16384
+  CANFD_BLINKER_KICK = 32768  # Observed SPAS + stalk contract on the camera-SCC harness
 
 
 class HyundaiFlags(IntFlag):
@@ -165,6 +166,7 @@ class HyundaiExtFlags(IntFlag):
   EV_MODE_STATUS_230 = 2 ** 16  # ECAN 0x230/DLC32 exposes the hybrid power-flow mode used for the EV indicator
   BOSCH_RADAR = 2 ** 17  # passive Bosch MRRevo14F 0x601-0x612 receive provider (see BOSCH_MRREVO14F_CAR)
   BOSCH_RADAR_BUS1 = 2 ** 18  # Observed receive src=1; otherwise use LKAS camera CAN (src=2)
+  CANFD_INDICATOR_HOLD = 2 ** 19  # Observed camera ADRV_0x1EA/DLC32 for an external indicator hold
 
 class Footnote(Enum):
   CANFD = CarFootnote(
@@ -1100,6 +1102,13 @@ PEDAL_INTERCEPTOR_PARAMS: dict[str, PedalInterceptorParams] = {
 def get_pedal_interceptor_params(CP) -> PedalInterceptorParams | None:
   required_flags = HyundaiFlags.CC_ONLY_CAR | HyundaiFlags.PEDAL_INTERCEPTOR
   return PEDAL_INTERCEPTOR_PARAMS.get(CP.carFingerprint) if CP.flags & required_flags == required_flags else None
+
+
+def is_ray_pedal_control(CP) -> bool:
+  return (CP.brand == "hyundai" and CP.openpilotLongitudinalControl
+          and getattr(CP, "carFingerprint", "") == CAR.KIA_RAY_EV
+          and get_pedal_interceptor_params(CP) is not None)
+
 
 if __name__ == "__main__":
   cars = []

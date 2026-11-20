@@ -15,6 +15,7 @@ from collections import deque
 
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.vehicle_model import VehicleModel
+from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
@@ -38,6 +39,7 @@ from openpilot.selfdrive.carrot.carrot_controls import CarrotControls
 from openpilot.selfdrive.carrot.carrot_man_input import get_carrot_man
 from openpilot.selfdrive.monitoring.dm_alerts import driver_monitoring_hud_alert
 from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
+from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 
 State = log.SelfdriveState.OpenpilotState
 LAT_CURVATURE_SATURATION_ACCEL = 0.1  # infiniteCable2 LatControlCurvature: 곡률 기반 steer_limited 임계 (m/s^2 환산)
@@ -61,13 +63,14 @@ class Controls:
     cloudlog.info("controlsd got CarParams")
 
     self.CI = interfaces[self.CP.carFingerprint](self.CP)
-    self.physical_blinker_hold = HoldReader(self.CP.carFingerprint, self.params)
+    self.physical_blinker_hold = HoldReader(self.CP, self.params)
 
     self.sm = messaging.SubMaster(['liveDelay', 'liveParameters', 'liveTorqueParameters', 'modelV2', 'selfdriveState',
                                    'liveCalibration', 'livePose', 'longitudinalPlan', 'carState', 'carOutput',
                                    'carrotMan', 'lateralPlan', 'radarState',
                                    'driverMonitoringState', 'onroadEvents', 'driverAssistance'], poll='selfdriveState')
     self.pm = messaging.PubMaster(['carControl', 'controlsState'])
+    self.lat_err_frames = 0
 
     self.steer_limited_by_safety = False
     self.curvature = 0.0
@@ -160,6 +163,7 @@ class Controls:
     # Wait only for the first readiness confirmation, including AlwaysLateral.
     CC.latActive = CC.latActive and lateral_ready
     CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and self.CP.openpilotLongitudinalControl
+    inhibit_faulted_controls(CC, self.sm['onroadEvents'])
 
     # AlwaysLateral must also stop while manager drains workers for this reboot.
     if self.params.get_bool("ImpactDashcamReboot"):
@@ -274,6 +278,20 @@ class Controls:
 
     return CC, lac_log
 
+  def lat_hud_state(self, lat_active, lac_log):
+    # HUDControl.latHudState for the Hyundai CAN-FD CCNC cluster (CcncClusterDisplay) lane highlight: 0 lat off,
+    # 1 laneless, 2 lane mode, 3 angle error over the saturation threshold for 0.3 s, 4 controller saturated.
+    # Other brands' carcontrollers do not read it.
+    err = abs(getattr(lac_log, 'steeringAngleDesiredDeg', 0.) - getattr(lac_log, 'steeringAngleDeg', 0.))
+    self.lat_err_frames = self.lat_err_frames + 1 if lat_active and err > STEER_ANGLE_SATURATION_THRESHOLD else 0
+    if not lat_active:
+      return 0
+    if lac_log.saturated:
+      return 4
+    if self.lat_err_frames >= int(0.3 / DT_CTRL):
+      return 3
+    return 2 if self.lanefull_mode_enabled else 1
+
   def publish(self, CC, lac_log):
     CS = self.sm['carState']
 
@@ -369,6 +387,12 @@ class Controls:
     hudControl.leadDistanceBars = self.sm['selfdriveState'].personality.raw + 1
     hudControl.visualAlert = self.sm['selfdriveState'].alertHudVisual
     hudControl.driverMonitoringAlert = driver_monitoring_hud_alert(self.sm)
+    # Read only by the Hyundai CAN-FD CCNC cluster (CcncClusterDisplay / CcncTrafficBackground): traffic-light
+    # background, lane highlight, target ring at the gap openpilot keeps, and stock texts for openpilot alerts.
+    hudControl.trafficState = self.sm['longitudinalPlan'].trafficState
+    hudControl.latHudState = self.lat_hud_state(CC.latActive, lac_log)
+    hudControl.desiredDistance = self.sm['longitudinalPlan'].desiredDistance
+    hudControl.alertType = self.sm['selfdriveState'].alertType
 
     radarState = self.sm['radarState']
     leadOne = radarState.leadOne
@@ -376,6 +400,12 @@ class Controls:
     hudControl.leadRelSpeed = leadOne.vRel if leadOne.status else 0
     hudControl.leadRadar = 1 if leadOne.radar else 0
     hudControl.leadDPath = leadOne.dPath
+    hudControl.signalStopObject = signal_stop_object_requested(
+      self.CP, CS, CC, lp, radarState,
+      inputs_ready=self.sm.all_checks(['longitudinalPlan', 'radarState']) and
+                   0 <= (self.sm.frame - self.sm.recv_frame['longitudinalPlan']) * DT_CTRL <= 0.2 and
+                   0 <= (self.sm.frame - self.sm.recv_frame['radarState']) * DT_CTRL <= 0.2,
+    )
 
     meta = self.sm['modelV2'].meta
     if False: # command
