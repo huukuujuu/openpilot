@@ -1,5 +1,90 @@
 # Repository memory
 
+- 2026-11-23: Preserve fresh original camera 0x161 lane display states only on
+  real PV5. Keep departure/BSD/boundary, green availability and trailer policy;
+  stock orange beats availability. Accept DBC 0/1/2/4/6 plus observed8, with
+  per-side legacy fallback. Use controller time for250ms expiry even with no
+  CAN traffic; reject wrong-source/template, invalid, ambiguous or older data.
+  No lane-control/paint-color inference, geometry, schema or other-car change.
+  Local729 checks pass,2native skips. Recorded-input sender comparison covers
+  21602 packets across10 segments with display0/1:19204 non-PV5 packets exactly
+  match baseline. PV5 preserves125 dashed packets per setting, retaining706
+  higher-priority sides. No live vehicle writes or physical display validation.
+
+- 2026-11-22: Route1209/10 on77dd33357a reproduces native ATC right-lamp
+  feedback being suppressed by Kick's display-only mask, followed by valid
+  front-gap cancellation. Preserve isolation and add a request-bound200ms
+  permission only for admitted high-speed TBT; revoke on cancellation/handover.
+  Real lamp, independent neutral lever and ordinary lane admission still apply.
+  No longer flash duration or relaxed gap/BSD gates. Max setting2000m; explicit
+  fresh motorway/expressway uses selected distance, other/unknown roads cap500m.
+  Stored400m remains400m. Recorded-input comparison first admits lane change at
+  segment+6.720s versus no baseline initiation in that request; no physical or
+  closed-loop completion claim.1562 local checks pass,2skip/26Linux-native
+  safety deselected,25Wiki checks pass. Native CI follows publication. No device
+  writes. See docs/atc_native_lane_20261122.md; private evidence in task
+  work/log1209 (full rlog/qcamera SHA-matched to read-only vehicle originals).
+  Published bd6e537 passes Linux signal, Jetson, docs and Wiki CI. Correct the
+  web catalog test's obsolete500m expectation;31web checks pass locally.
+
+- 2026-11-21: Latest I5PE drives1206/1207 add24 full rlogs+qcamera,48 SHA-matched
+  files, read-only retrieval on3d43de5ca6. All28 requests have SPAS and raw lamp
+  response, observation-to-lamp503..651ms/mean576. Each repeats unanswered APRK
+  400ms wait. Mode1 caches failed probe60s without renewal while stock/ownership
+  remain healthy; new ACK, stale stock, lost ownership, settings/clock/expiry
+  invalidate. Mode0 and Panda synchronization/driver guards unchanged. Exact
+  controller simulation with recorded request windows saves400ms on16/28,
+  mean228.6ms; physical improvement unmeasured. Bound confirmed blocked turn peak
+  to0.3s/5deg with current torque/yaw; clear on admitted growth/release/opposite/
+  curve/invalid. Existing2s rearm/1s-dark remain. Entire491segments/62routes/
+  550793inputs: native434->436, delayed410ms433->435, external435->437; twoadded,
+  no removed/changed existing requests. Recover1207/10+0.206 right, stilllate;
+  added118a/10 lacksvideo/delayedholdclipped. Reject broader rearm/growth causing
+  loss or748ms delay. Busy/narrow-model/stale-input misses remain; no zero-false
+  rate claim.1238localpass/9skip, two baseline reproductions pass. Full controller
+  regression also reproduces/fixes disabled-idle cache cleanup. No device
+  writes/actuation. Private scratch2026-11-21-indicator-fixes/INDEX.md and updated
+  replay review. CI follows publication.
+
+- 2026-11-20: Owner requests internal CD210 again after disliking Cheddar.
+  Restore exact60792584B/f73a9e535523 ONNX, vendored compile_modeld and ordinary
+  ModelState together; Carrot Web fixed name is CD210. External eGPU/Jetson
+  selections/pins unchanged. Retain isolated Cheddar tools only for explicit
+  experiments. Existing startup tree stamp/SCons dependencies rebuild the
+  internal artifact. Local272Python+4web checks pass; Linux full build now
+  exercises actual CD210 warmup, both camera warps, catch-up and history reset.
+  Full native CI follows publication. No live vehicle installation in this task.
+  Earlier Cheddar timing success did not establish preferred driving behavior.
+
+- 2026-11-20: Sonata565c34a74e40b91d uploads464/0..1 and466/0..2 on
+  a9811adce contain persistent CAN faults, not a UI crash.464 selects classic
+  SONATA;466 selects SONATA_2024 with recorded HDA2=0/CameraSCC=0. Physical
+  ECAN is bus1 (0x100/32,0x1AA/16,0x1CF/8); LKAS_ALT0x110 is on bus2.
+  Enabling HDA2 alone retains this platform's inherited CameraSCC flag and
+  still waits for SCC_CONTROL/LFAHDA_CLUSTER on the wrong bus. Normalize the
+  existing HDA2+CameraSCC0 selection to stock SCC before deriving capabilities,
+  safety and longitudinal policy; explicit CameraSCC modes remain unchanged.
+  Current36 CAN-FD platforms x eight setting combinations reproduce one old
+  failure (Sonata HDA2 stock), all pass corrected.745 related local checks pass.
+  Full CarState/parser replay of five complete rlogs, with parser registration
+  clock aligned to recorded time, has23339/23339 valid samples after the initial
+  five seconds per route; recorded configurations have23339 invalid. This is
+  receive-path replay, not ECU acceptance, physical driving or a live fix.
+  Vehicle still needs Sonata2024 selection/HDA2 enabled and restart; no Params
+  or device writes performed. Private evidence shares tesla-startup scratch.
+
+- 2026-11-20: Latest-labelled wip device edb4204468f19127 (unidentified, not
+  confirmed Tesla) repeatedly exits UI1 on lazy reboot/signal_mode imports;
+  tmux diagnostics also cannot import egpu_diagnostics. All helpers are tracked
+  in ad0943; mismatched traceback source supports runtime/checkout inconsistency,
+  but its cause is unproven. Load these stdlib-only helpers with their callers
+  during startup, preserving setting reads and reboot/diagnostic behavior.
+  Four isolated caller paths reproduce missing/replaced-helper failure before
+  correction and pass afterward (eight cases); no blanket exception suppression.
+  This prevents those late imports, not arbitrary damaged installations. No
+  reporter device writes or physical recovery proof. Evidence in private
+  .analysis/scratch/2026-11-20-tesla-startup/INDEX.md.
+
 - 2026-11-20: Merge PR583 alternate 8-byte0x4B8 PROLONG navigation receiver.
   Owner requests data-based support across Hyundai/Kia/Genesis CAN-FD, including
   EV4/PV5 optional reception, with no GV80 fingerprint gate. Share the existing
