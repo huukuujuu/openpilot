@@ -9,7 +9,7 @@ to `huukuujuu/openpilot`; it does not update the fork's `carrot-wip` branch.
 For new upstream history, it opens or updates one PR from the original
 `ajouatom:carrot-wip` into `huukuujuu:carrot-ev6`. It computes an ordinary
 three-way merge without altering a working checkout. Text conflicts, including
-modify/delete conflicts, block integration and are listed in the PR and run
+modify/delete conflicts, normally block integration and are listed in the PR and run
 summary. The JSON merge report is saved as an Actions artifact.
 
 If conflict-free, the workflow creates a deterministic local merge commit.
@@ -116,3 +116,9 @@ it does not create PRs, change branch heads, merge, or require a GitHub token.
 After a merge, a comma installed from this fork follows `origin/carrot-ev6`
 through its existing device update setting. This workflow does not enable that
 setting or change its reboot policy.
+
+## Generated Carrot Web conflicts
+
+If every conflict is confined to the tools bundle and asset manifest, a read-only job regenerates both from the merged sources and runs the web tests. A missing or nonregular output, an unexpected changed file, missing EV6 dashcam controls or a failed test stops recovery. A separate publisher imports only the two output blobs into the recomputed merge tree. A content-addressed recovery branch and PR carry the exact candidate through CI. The controller checks both branch tips and the PR again before merging. Other conflicts still require review.
+
+The personal server checks the public GitHub API every 15 minutes for the most recent scheduled EV6 sync. Manual runs are excluded. After three hours without a scheduled run it writes a warning to the SSH login notice. A successful fresh lookup clears the warning. API failures display a separate lookup error. The server uses no GitHub write credentials.

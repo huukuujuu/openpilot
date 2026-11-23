@@ -1,6 +1,6 @@
 """Merge ajouatom/carrot-wip into this fork only after testing the exact PR merge.
 
-No force pushes, rebases, or automatic conflict resolutions. Authentication comes
+Ordinary merges use this controller. Generated-web recovery runs in separate jobs. Authentication comes
 from GITHUB_TOKEN; local dry runs do not require a token or change remote state.
 """
 from __future__ import annotations
@@ -21,6 +21,8 @@ SOURCE_BRANCH = "carrot-wip"
 TARGET = "carrot-ev6"
 UPSTREAM_REF = "refs/upstream-sync/source"
 TARGET_REF = "refs/upstream-sync/target"
+WEB = "openpilot/selfdrive/carrot/web/"
+WEB_FILES = {WEB + "generated/asset-manifest.json", WEB + "js/generated/tools.js"}
 TITLE = "chore: merge upstream carrot-wip into carrot-ev6"
 TRANSIENT_ERRORS = {0, 408, 500, 502, 503, 504}
 
@@ -113,6 +115,10 @@ def analyse() -> dict:
   }
 
 
+def web_recovery_eligible(state: dict) -> bool:
+  return bool(state.get("conflicts")) and set(state["conflicts"]) <= WEB_FILES
+
+
 def pull_body(state: dict) -> str:
   conflict_text = "\n".join(f"- `{path}`" for path in state.get("conflicts", []))
   result = (
@@ -120,6 +126,8 @@ def pull_body(state: dict) -> str:
     if state["state"] == "conflict" else
     "The exact proposed merge must pass the EV6 upstream-sync CI before automatic merge."
   )
+  if web_recovery_eligible(state):
+    result = "Web assets conflict. The workflow will rebuild from merged sources and validate a separate recovery PR.\n\n" + conflict_text
   run = os.environ.get("GITHUB_RUN_ID")
   run_link = f"\n\n[Latest sync run](https://github.com/{REPOSITORY}/actions/runs/{run})" if run else ""
   return (
@@ -289,7 +297,10 @@ def prepare(dry_run: bool):
   summary(f"Upstream integration PR: {pr['html_url']}\n\nState: {state['state']}")
   if state["state"] == "conflict":
     summary("Conflicting files:\n" + "\n".join(f"- `{p}`" for p in state["conflicts"]))
-    emit(ready=False, pr=pr["number"], conflict=True)
+    if web_recovery_eligible(state):
+      emit(ready=False, recover=True, pr=pr["number"], base_sha=state["base"], source_sha=state["source"])
+    else:
+      emit(ready=False, pr=pr["number"], conflict=True)
     return
   verify_pull(api(f"repos/{REPOSITORY}/pulls/{pr['number']}"), state["base"], state["source"])
   # GitHub's refs/pull/N/merge can retain a previous base even after the API's

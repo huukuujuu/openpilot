@@ -5,6 +5,11 @@ on:
     # Offset from the hour to reduce peak-time scheduling delays (UTC).
     - cron: '17,47 * * * *'
   workflow_dispatch:
+    inputs:
+      replay_web:
+        description: Replay the November web conflict without publishing or merging
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,13 +20,14 @@ concurrency:
 
 jobs:
   prepare:
-    if: github.repository == 'huukuujuu/openpilot'
+    if: github.repository == 'huukuujuu/openpilot' && !inputs.replay_web
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
     outputs:
+      recover: ${{ steps.prepare.outputs.recover }}
       ready: ${{ steps.prepare.outputs.ready }}
       pr: ${{ steps.prepare.outputs.pr }}
       merge_sha: ${{ steps.prepare.outputs.merge_sha }}
@@ -118,3 +124,130 @@ jobs:
           python tools/upstream_sync/sync.py finish
           --pr "$PR_NUMBER" --base "$BASE_SHA"
           --source "$SOURCE_SHA" --merge "$MERGE_SHA"
+
+  rebuild_web:
+    needs: prepare
+    if: needs.prepare.outputs.recover == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      BASE: ${{ needs.prepare.outputs.base_sha }}
+      SOURCE: ${{ needs.prepare.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python tools/upstream_sync/recover_web.py rebuild
+        env:
+          ARTIFACT: ${{ runner.temp }}/ev6-web-files
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ev6-web-files
+          path: ${{ runner.temp }}/ev6-web-files
+          if-no-files-found: error
+
+  publish_web:
+    needs: [prepare, rebuild_web]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      candidate: ${{ steps.publish.outputs.candidate }}
+      pr: ${{ steps.publish.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ev6-web-files
+          path: ${{ runner.temp }}/ev6-web-files
+      - id: publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          ARTIFACT: ${{ runner.temp }}/ev6-web-files
+          BASE: ${{ needs.prepare.outputs.base_sha }}
+          SOURCE: ${{ needs.prepare.outputs.source_sha }}
+        run: python tools/upstream_sync/recover_web.py publish
+
+  validate_web:
+    needs: publish_web
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yaml
+    with:
+      checkout_ref: ${{ needs.publish_web.outputs.candidate }}
+      run_number: upstream-web-recovery
+
+  check_web_sync:
+    needs: publish_web
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.publish_web.outputs.candidate }}
+          persist-credentials: false
+      - run: python -m unittest discover -s tools/upstream_sync -p 'test_*.py'
+
+  merge_web:
+    needs: [prepare, publish_web, validate_web, check_web_sync]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - env:
+          BASE: ${{ needs.prepare.outputs.base_sha }}
+          SOURCE: ${{ needs.prepare.outputs.source_sha }}
+          CANDIDATE: ${{ needs.publish_web.outputs.candidate }}
+          PR: ${{ needs.publish_web.outputs.pr }}
+          GITHUB_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: python tools/upstream_sync/recover_web.py finish
+
+  replay_web:
+    if: github.repository == 'huukuujuu/openpilot' && inputs.replay_web
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m unittest discover -s tools/upstream_sync -p 'test_*.py'
+      - name: Reproduce the known-good November integration tree
+        env:
+          PYTHONPATH: tools/upstream_sync
+          ARTIFACT: ${{ runner.temp }}/replay-web
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from recover_web import git, rebuild, reconstruct
+          base, source = "8e521bad6da6767eafc62ebfca4da24d084f867d", "6a9225b541f4777b7202ec49abd8b80d7a78b9ba"
+          directory = Path(os.environ["ARTIFACT"])
+          rebuild(base, source, directory)
+          commit = reconstruct(base, source, directory)
+          expected = git("rev-parse", "7e68a419194583824242bfde4bf73522fd33563d^{tree}").stdout
+          if git("rev-parse", commit + "^{tree}").stdout != expected:
+            raise SystemExit("Rebuilt tree differs from the independently validated merge")
+          PY
